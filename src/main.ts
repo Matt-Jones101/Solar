@@ -30,7 +30,10 @@ const viewer = new Viewer('cesiumContainer')
 
 // Allow Solar-System-scale viewing distances.
 viewer.camera.frustum.far = 100_000_000_000_000
-viewer.camera.constrainedAxis = undefined
+viewer.camera.constrainedAxis =
+  Cartesian3.clone(
+    Cartesian3.UNIT_Z
+  )
 
 type SolarCameraController =
   typeof viewer.scene.screenSpaceCameraController & {
@@ -1197,9 +1200,12 @@ const sun_rad = 696_340_000
 // Sun is at the origin.
 const sun_pos = Cartesian3.ZERO
 
-const BODY_STACK_PARTITIONS = 96
-const BODY_SLICE_PARTITIONS = 96
-const BODY_SUBDIVISIONS = 256
+const BODY_STACK_PARTITIONS = 192
+const BODY_SLICE_PARTITIONS = 192
+const BODY_SUBDIVISIONS = 512
+
+const MOON_ICON_FADE_OUT_PIXEL_DIAMETER = 28
+const MOON_ICON_FADE_IN_PIXEL_DIAMETER = 26
 
 // J2000 obliquity.
 //
@@ -1294,20 +1300,24 @@ type OrbitGapOptions = {
 
 type PlanetRenderData = {
   planet: PlanetData
+  entity: Entity
   positionProperty: ConstantPositionProperty
   billboardColor: ConstantProperty
   billboardState: BillboardState
   currentPosition: Cartesian3
+  orbitNormal: Cartesian3
   orbitPositions: ConstantProperty
 }
 
 type MoonRenderData = {
   moon: MoonData
   parent: PlanetRenderData
+  entity: Entity
   positionProperty: ConstantPositionProperty
   billboardColor: ConstantProperty
   billboardState: BillboardState
   currentPosition: Cartesian3
+  orbitNormal: Cartesian3
   orbitPositions: ConstantProperty
 }
 
@@ -1921,6 +1931,67 @@ function orbitalPlaneToWorld(
   return new Cartesian3(x, y, z)
 }
 
+function getOrbitPlaneNormal(
+  inclination: number,
+  longitudeAscendingNode: number
+): Cartesian3 {
+  const xAxis =
+    orbitalPlaneToWorld(
+      1,
+      0,
+      inclination,
+      longitudeAscendingNode,
+      0
+    )
+
+  const yAxis =
+    orbitalPlaneToWorld(
+      0,
+      1,
+      inclination,
+      longitudeAscendingNode,
+      0
+    )
+
+  return Cartesian3.normalize(
+    Cartesian3.cross(
+      xAxis,
+      yAxis,
+      new Cartesian3()
+    ),
+    new Cartesian3()
+  )
+}
+
+function getPlanetOrbitNormal(
+  planet: PlanetData,
+  time: JulianDate
+): Cartesian3 {
+  const elements =
+    getOrbitalElements(
+      planet,
+      time
+    )
+
+  return getOrbitPlaneNormal(
+    elements.i,
+    elements.longitudeAscendingNode
+  )
+}
+
+function getMoonOrbitNormal(
+  moon: MoonData
+): Cartesian3 {
+  return getOrbitPlaneNormal(
+    degToRad(
+      moon.inclination
+    ),
+    degToRad(
+      moon.longitudeAscendingNode
+    )
+  )
+}
+
 
 // --------------------------------------------------
 // CALCULATE PLANET POSITION
@@ -2363,10 +2434,16 @@ for (const planet of planets) {
 
   planetRenderData.push({
     planet,
+    entity: planetEntity,
     positionProperty,
     billboardColor,
     billboardState,
     currentPosition: initialPosition,
+    orbitNormal:
+      getPlanetOrbitNormal(
+        planet,
+        viewer.clock.currentTime
+      ),
     orbitPositions,
   })
 }
@@ -2512,10 +2589,15 @@ for (const moon of majorMoons) {
   moonRenderData.push({
     moon,
     parent,
+    entity: moonEntity,
     positionProperty,
     billboardColor,
     billboardState,
     currentPosition: initialPosition,
+    orbitNormal:
+      getMoonOrbitNormal(
+        moon
+      ),
     orbitPositions,
   })
 }
@@ -2580,6 +2662,61 @@ function getEntityPosition(
     ) as
       | Cartesian3
       | undefined
+}
+
+function getCameraConstraintAxis(
+  entity:
+    | Entity
+    | undefined
+): Cartesian3 {
+  if (
+    !entity ||
+    entity === sunEntity
+  ) {
+    return Cartesian3.UNIT_Z
+  }
+
+  const planet =
+    planetRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (planet) {
+    planet.orbitNormal =
+      getPlanetOrbitNormal(
+        planet.planet,
+        viewer.clock.currentTime
+      )
+
+    return planet.orbitNormal
+  }
+
+  const moon =
+    moonRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (moon) {
+    return moon.orbitNormal
+  }
+
+  return Cartesian3.UNIT_Z
+}
+
+function updateCameraConstraintAxis(
+  entity:
+    | Entity
+    | undefined =
+      activeCameraTargetEntity
+) {
+  viewer.camera.constrainedAxis =
+    Cartesian3.clone(
+      getCameraConstraintAxis(
+        entity
+      )
+    )
 }
 
 function normaliseCameraAxes() {
@@ -2737,6 +2874,8 @@ function updateCameraCentre() {
     return
   }
 
+  updateCameraConstraintAxis()
+
   const position =
     getEntityPosition(
       activeCameraTargetEntity
@@ -2842,6 +2981,10 @@ function trackBody(
     destination,
     directionWC,
     upWC
+  )
+
+  updateCameraConstraintAxis(
+    entity
   )
 }
 
@@ -3573,8 +3716,8 @@ function updateMoonBillboardFade(
     billboardColor,
     state,
     deltaSeconds,
-    16,
-    15.5,
+    MOON_ICON_FADE_OUT_PIXEL_DIAMETER,
+    MOON_ICON_FADE_IN_PIXEL_DIAMETER,
     0.25
   )
 }
