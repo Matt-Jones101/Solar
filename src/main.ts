@@ -2820,6 +2820,21 @@ function getEntityRadius(
   return undefined
 }
 
+function isEntityMoon(
+  entity:
+    | Entity
+    | undefined
+) {
+  if (!entity) {
+    return false
+  }
+
+  return moonRenderData.some(
+    (renderData) =>
+      renderData.entity === entity
+  )
+}
+
 function updateRenderOriginForCameraTarget() {
   if (!activeCameraTargetEntity) {
     setRenderOrigin(
@@ -4193,6 +4208,15 @@ function hideAllBillboardsForLocalBodyView(
     )
   }
 
+  if (
+    activeCameraTargetEntity !== sunEntity &&
+    !isEntityMoon(
+      activeCameraTargetEntity
+    )
+  ) {
+    return
+  }
+
   for (const renderData of moonRenderData) {
     hideBillboardForLocalBodyView(
       renderData.billboardColor,
@@ -4213,7 +4237,7 @@ let previousFrameTime =
 let lastOrbitUpdateJulianDay =
   Number.NaN
 
-viewer.scene.preRender.addEventListener(() => {
+viewer.scene.preUpdate.addEventListener(() => {
   const currentFrameTime =
     performance.now()
 
@@ -4287,10 +4311,6 @@ viewer.scene.preRender.addEventListener(() => {
   updateRenderedBodyPositions(
     currentTime,
     updatePlanetOrbitShapes
-  )
-
-  refreshEntityDisplayNow(
-    currentTime
   )
 
 
