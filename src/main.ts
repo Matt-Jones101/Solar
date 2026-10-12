@@ -1276,6 +1276,14 @@ type OrbitGap = {
   radius: number
 }
 
+type OrbitGapOptions = {
+  iconPixels: number
+  iconAlpha: number
+  minRadius: number
+  maxRadius: number
+  padding: number
+}
+
 type PlanetRenderData = {
   planet: PlanetData
   positionProperty: ConstantPositionProperty
@@ -1291,6 +1299,7 @@ type MoonRenderData = {
   positionProperty: ConstantPositionProperty
   billboardColor: ConstantProperty
   billboardState: BillboardState
+  currentPosition: Cartesian3
   orbitPositions: ConstantProperty
 }
 
@@ -2465,6 +2474,7 @@ for (const moon of majorMoons) {
     positionProperty,
     billboardColor,
     billboardState,
+    currentPosition: initialPosition,
     orbitPositions,
   })
 }
@@ -2819,22 +2829,10 @@ function getScreenPosition(
     )
 }
 
-function addOrbitGap(
-  gaps: OrbitGap[],
+function getBodyPixelRadius(
   position: Cartesian3,
-  radius: number,
-  iconPixels: number,
-  iconAlpha: number
+  radius: number
 ) {
-  const centre =
-    getScreenPosition(
-      position
-    )
-
-  if (!centre) {
-    return
-  }
-
   const edgePosition =
     Cartesian3.add(
       position,
@@ -2851,32 +2849,75 @@ function addOrbitGap(
       edgePosition
     )
 
-  const bodyPixels =
+  const centre =
+    getScreenPosition(
+      position
+    )
+
+  if (
+    !centre ||
+    !edge
+  ) {
+    return 0
+  }
+
+  return Cartesian2.distance(
+    centre,
     edge
-      ? Cartesian2.distance(
-        centre,
-        edge
-      )
-      : 0
+  )
+}
+
+function createOrbitGap(
+  position: Cartesian3,
+  radius: number,
+  options: OrbitGapOptions
+) {
+  const centre =
+    getScreenPosition(
+      position
+    )
+
+  if (!centre) {
+    return undefined
+  }
+
+  const bodyPixels =
+    getBodyPixelRadius(
+      position,
+      radius
+    )
 
   const iconRadius =
-    iconAlpha > 0.05
-      ? iconPixels / 2
+    options.iconAlpha > 0.05
+      ? options.iconPixels / 2
       : 0
 
-  gaps.push({
+  const visibleRadius =
+    Math.max(
+      bodyPixels,
+      iconRadius
+    )
+
+  if (
+    visibleRadius <
+    options.minRadius
+  ) {
+    return undefined
+  }
+
+  return {
     centre:
       Cartesian2.clone(
         centre
       ),
 
     radius:
-      Math.max(
-        bodyPixels,
-        iconRadius
-      ) +
-      8,
-  })
+      Math.min(
+        options.maxRadius,
+        visibleRadius +
+        options.padding
+      ),
+  }
 }
 
 function pointIsInOrbitGap(
@@ -3011,44 +3052,48 @@ function drawOrbitOverlay() {
     return
   }
 
-  const gaps: OrbitGap[] = []
-
-  addOrbitGap(
-    gaps,
+  const sunGap =
+    createOrbitGap(
     sun_pos,
     sun_rad,
-    32,
-    sunBillboardState.alpha
+    {
+      iconPixels: 32,
+      iconAlpha:
+        sunBillboardState.alpha,
+      minRadius: 2,
+      maxRadius: 34,
+      padding: 5,
+    }
   )
 
   for (const renderData of planetRenderData) {
-    addOrbitGap(
-      gaps,
+    const planetGap =
+      createOrbitGap(
       renderData.currentPosition,
       renderData.planet.radius,
-      32,
-      renderData.billboardState.alpha
+      {
+        iconPixels: 32,
+        iconAlpha:
+          renderData.billboardState.alpha,
+        minRadius: 2,
+        maxRadius: 34,
+        padding: 5,
+      }
     )
-  }
 
-  for (const renderData of moonRenderData) {
-    const position =
-      getMoonPosition(
-        renderData.moon,
-        renderData.parent.currentPosition,
-        viewer.clock.currentTime
+    const gaps =
+      [
+        sunGap,
+        planetGap,
+      ].filter(
+        (
+          gap
+        ): gap is OrbitGap =>
+          Boolean(
+            gap
+          )
       )
 
-    addOrbitGap(
-      gaps,
-      position,
-      renderData.moon.radius,
-      20,
-      renderData.billboardState.alpha
-    )
-  }
-
-  for (const renderData of planetRenderData) {
     drawOrbitPath(
       overlay.context,
       renderData.orbitPositions.getValue(
@@ -3064,6 +3109,47 @@ function drawOrbitOverlay() {
   }
 
   for (const renderData of moonRenderData) {
+    const parentGap =
+      createOrbitGap(
+        renderData.parent.currentPosition,
+        renderData.parent.planet.radius,
+        {
+          iconPixels: 32,
+          iconAlpha:
+            renderData.parent.billboardState.alpha,
+          minRadius: 2,
+          maxRadius: 46,
+          padding: 5,
+        }
+      )
+
+    const moonGap =
+      createOrbitGap(
+        renderData.currentPosition,
+        renderData.moon.radius,
+        {
+          iconPixels: 20,
+          iconAlpha:
+            renderData.billboardState.alpha,
+          minRadius: 3,
+          maxRadius: 14,
+          padding: 3,
+        }
+      )
+
+    const gaps =
+      [
+        parentGap,
+        moonGap,
+      ].filter(
+        (
+          gap
+        ): gap is OrbitGap =>
+          Boolean(
+            gap
+          )
+      )
+
     drawOrbitPath(
       overlay.context,
       renderData.orbitPositions.getValue(
@@ -3205,7 +3291,7 @@ function updateMoonBillboardFade(
   parentBillboardState: BillboardState,
   deltaSeconds: number
 ) {
-  if (parentBillboardState.alpha > 0.01) {
+  if (parentBillboardState.alpha > 0.05) {
     state.visible = false
 
     moveBillboardAlphaToward(
@@ -3225,8 +3311,8 @@ function updateMoonBillboardFade(
     billboardColor,
     state,
     deltaSeconds,
-    4,
-    3.5,
+    8,
+    7,
     0.25
   )
 }
@@ -3326,6 +3412,9 @@ viewer.scene.preRender.addEventListener(() => {
     renderData.positionProperty.setValue(
       position
     )
+
+    renderData.currentPosition =
+      position
 
     renderData.orbitPositions.setValue(
       createMoonOrbitPositions(
