@@ -37,6 +37,7 @@ viewer.camera.constrainedAxis =
 
 type SolarCameraController =
   typeof viewer.scene.screenSpaceCameraController & {
+    _minimumZoomRate?: number
     _maximumZoomRate?: number
   }
 
@@ -69,6 +70,13 @@ cameraController.enableCollisionDetection = false
 // but it feels artificially slow when viewing the whole
 // Solar System from far outside Neptune and Pluto.
 cameraController._maximumZoomRate = 100_000_000_000_000
+
+const DEFAULT_CAMERA_ZOOM_FACTOR =
+  cameraController.zoomFactor
+
+const DEFAULT_MINIMUM_ZOOM_RATE = 20
+
+const TRACKED_BODY_ZOOM_FACTOR = 8
 
 const orbitOverlayCanvas =
   document.createElement('canvas')
@@ -1203,8 +1211,9 @@ const sun_pos = Cartesian3.ZERO
 const BODY_STACK_PARTITIONS = 128
 const BODY_SLICE_PARTITIONS = 128
 
-const MOON_ICON_FADE_OUT_PIXEL_DIAMETER = 96
-const MOON_ICON_FADE_IN_PIXEL_DIAMETER = 88
+const MOON_ICON_FADE_OUT_PIXEL_DIAMETER = 32
+const MOON_ICON_FADE_IN_PIXEL_DIAMETER = 28
+const LOCAL_BODY_VIEW_PIXEL_DIAMETER = 16
 
 // J2000 obliquity.
 //
@@ -2296,9 +2305,6 @@ const sunBillboardState: BillboardState = {
 const trackableBodies =
   new Set<Entity>()
 
-const bodyBillboardStates =
-  new Map<Entity, BillboardState>()
-
 const sunEntity = viewer.entities.add({
   name: 'Sun',
 
@@ -2344,11 +2350,6 @@ const sunEntity = viewer.entities.add({
 
 trackableBodies.add(
   sunEntity
-)
-
-bodyBillboardStates.set(
-  sunEntity,
-  sunBillboardState
 )
 
 
@@ -2481,11 +2482,6 @@ for (const planet of planets) {
 
   trackableBodies.add(
     planetEntity
-  )
-
-  bodyBillboardStates.set(
-    planetEntity,
-    billboardState
   )
 
   planetRenderData.push({
@@ -2644,11 +2640,6 @@ for (const moon of majorMoons) {
     moonEntity
   )
 
-  bodyBillboardStates.set(
-    moonEntity,
-    billboardState
-  )
-
   moonRenderData.push({
     moon,
     parent,
@@ -2762,6 +2753,81 @@ function getEntityPhysicalPosition(
   }
 
   return undefined
+}
+
+function getEntityRenderPosition(
+  entity: Entity
+) {
+  if (entity === sunEntity) {
+    return sunRenderPosition
+  }
+
+  const planet =
+    planetRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (planet) {
+    return planet.currentPosition
+  }
+
+  const moon =
+    moonRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (moon) {
+    return moon.currentPosition
+  }
+
+  return undefined
+}
+
+function getEntityRadius(
+  entity: Entity
+) {
+  if (entity === sunEntity) {
+    return sun_rad
+  }
+
+  const planet =
+    planetRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (planet) {
+    return planet.planet.radius
+  }
+
+  const moon =
+    moonRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (moon) {
+    return moon.moon.radius
+  }
+
+  return undefined
+}
+
+function isEntityMoon(
+  entity:
+    | Entity
+    | undefined
+) {
+  if (!entity) {
+    return false
+  }
+
+  return moonRenderData.some(
+    (renderData) =>
+      renderData.entity === entity
+  )
 }
 
 function updateRenderOriginForCameraTarget() {
@@ -2946,6 +3012,45 @@ function updateCameraConstraintAxis(
       localAxis,
       localAxis
     )
+}
+
+function updateCameraZoomRate() {
+  if (!activeCameraTargetEntity) {
+    cameraController.zoomFactor =
+      DEFAULT_CAMERA_ZOOM_FACTOR
+
+    cameraController._minimumZoomRate =
+      DEFAULT_MINIMUM_ZOOM_RATE
+
+    cameraController._maximumZoomRate =
+      100_000_000_000_000
+
+    return
+  }
+
+  const radius =
+    getEntityRadius(
+      activeCameraTargetEntity
+    )
+
+  if (!radius) {
+    return
+  }
+
+  cameraController.zoomFactor =
+    TRACKED_BODY_ZOOM_FACTOR
+
+  cameraController._minimumZoomRate =
+    Math.max(
+      DEFAULT_MINIMUM_ZOOM_RATE,
+      Math.min(
+        radius * 0.5,
+        1_000_000
+      )
+    )
+
+  cameraController._maximumZoomRate =
+    100_000_000_000_000
 }
 
 function normaliseCameraAxes() {
@@ -3240,6 +3345,8 @@ function trackBody(
   updateCameraConstraintAxis(
     entity
   )
+
+  updateCameraZoomRate()
 }
 
 viewer
@@ -3852,15 +3959,9 @@ function moveBillboardAlphaToward(
   )
 }
 
-function updateBillboardFade(
+function getPixelDiameter(
   position: Cartesian3,
-  radius: number,
-  billboardColor: ConstantProperty,
-  state: BillboardState,
-  deltaSeconds: number,
-  fadeOutThreshold: number = 16,
-  fadeInThreshold: number = 15.5,
-  fadeDuration: number = 0.4
+  radius: number
 ) {
   const distance =
     Cartesian3.distance(
@@ -3883,15 +3984,33 @@ function updateBillboardFade(
       : undefined
 
   if (typeof fovy !== 'number') {
-    return
+    return 0
   }
 
-  const pixelDiameter =
+  return (
     (
       angularDiameter /
       fovy
     ) *
     viewer.scene.canvas.clientHeight
+  )
+}
+
+function updateBillboardFade(
+  position: Cartesian3,
+  radius: number,
+  billboardColor: ConstantProperty,
+  state: BillboardState,
+  deltaSeconds: number,
+  fadeOutThreshold: number = 16,
+  fadeInThreshold: number = 15.5,
+  fadeDuration: number = 0.4
+) {
+  const pixelDiameter =
+    getPixelDiameter(
+      position,
+      radius
+    )
 
   state.pixelDiameter =
     pixelDiameter
@@ -4000,12 +4119,28 @@ function isTrackedBodyLocalView() {
     return false
   }
 
-  return Boolean(
-    bodyBillboardStates
-      .get(
-        trackedEntity
-      )
-      ?.hiddenBySize
+  const position =
+    getEntityRenderPosition(
+      trackedEntity
+    )
+
+  const radius =
+    getEntityRadius(
+      trackedEntity
+    )
+
+  if (
+    !position ||
+    !radius
+  ) {
+    return false
+  }
+
+  return (
+    getPixelDiameter(
+      position,
+      radius
+    ) >= LOCAL_BODY_VIEW_PIXEL_DIAMETER
   )
 }
 
@@ -4040,6 +4175,22 @@ function hideAllBillboardsForLocalBodyView(
   )
 
   for (const renderData of planetRenderData) {
+    hideBillboardForLocalBodyView(
+      renderData.billboardColor,
+      renderData.billboardState,
+      deltaSeconds
+    )
+  }
+
+  if (
+    !isEntityMoon(
+      activeCameraTargetEntity
+    )
+  ) {
+    return
+  }
+
+  for (const renderData of moonRenderData) {
     hideBillboardForLocalBodyView(
       renderData.billboardColor,
       renderData.billboardState,
@@ -4141,6 +4292,8 @@ viewer.scene.preRender.addEventListener(() => {
   // --------------------------------------------------
 
   updateCameraCentre()
+
+  updateCameraZoomRate()
 
 
   // --------------------------------------------------
