@@ -551,7 +551,7 @@ function canSubdivideTimelineLevel(
       return parent.step % child.step === 0
     }
 
-    return child.unit === 'day'
+    return false
   }
 
   const parentSeconds =
