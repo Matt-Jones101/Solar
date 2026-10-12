@@ -1,15 +1,19 @@
 import {
   ArcType,
   buildModuleUrl,
+  Cartesian2,
   Cartesian3,
   ClockRange,
   Color,
   ConstantPositionProperty,
   ConstantProperty,
   CubeMapPanorama,
+  Entity,
   HeadingPitchRange,
   JulianDate,
   Matrix3,
+  ScreenSpaceEventHandler,
+  ScreenSpaceEventType,
   Viewer,
 } from 'cesium'
 
@@ -2108,7 +2112,10 @@ const sunBillboardState: BillboardState = {
   visible: true,
 }
 
-viewer.entities.add({
+const trackableBodies =
+  new Set<Entity>()
+
+const sunEntity = viewer.entities.add({
   name: 'Sun',
 
   position: sun_pos,
@@ -2143,6 +2150,10 @@ viewer.entities.add({
       Number.POSITIVE_INFINITY,
   },
 })
+
+trackableBodies.add(
+  sunEntity
+)
 
 
 // --------------------------------------------------
@@ -2194,7 +2205,7 @@ for (const planet of planets) {
       positions:
         orbitPositions,
 
-      width: 1,
+      width: 2,
 
       arcType:
         ArcType.NONE,
@@ -2204,7 +2215,14 @@ for (const planet of planets) {
           .fromCssColorString(
             planet.colour
           )
-          .withAlpha(0.3),
+          .withAlpha(0.75),
+
+      depthFailMaterial:
+        Color
+          .fromCssColorString(
+            planet.colour
+          )
+          .withAlpha(0.75),
     },
   })
 
@@ -2213,7 +2231,7 @@ for (const planet of planets) {
   // PLANET
   // --------------------------------------------------
 
-  viewer.entities.add({
+  const planetEntity = viewer.entities.add({
     name:
       planet.name,
 
@@ -2250,6 +2268,10 @@ for (const planet of planets) {
         Number.POSITIVE_INFINITY,
     },
   })
+
+  trackableBodies.add(
+    planetEntity
+  )
 
   planetRenderData.push({
     planet,
@@ -2319,7 +2341,7 @@ for (const moon of majorMoons) {
       positions:
         orbitPositions,
 
-      width: 1,
+      width: 1.5,
 
       arcType:
         ArcType.NONE,
@@ -2329,7 +2351,14 @@ for (const moon of majorMoons) {
           .fromCssColorString(
             moon.colour
           )
-          .withAlpha(0.25),
+          .withAlpha(0.65),
+
+      depthFailMaterial:
+        Color
+          .fromCssColorString(
+            moon.colour
+          )
+          .withAlpha(0.65),
     },
   })
 
@@ -2338,7 +2367,7 @@ for (const moon of majorMoons) {
   // MOON
   // --------------------------------------------------
 
-  viewer.entities.add({
+  const moonEntity = viewer.entities.add({
     name:
       moon.name,
 
@@ -2376,6 +2405,10 @@ for (const moon of majorMoons) {
     },
   })
 
+  trackableBodies.add(
+    moonEntity
+  )
+
   moonRenderData.push({
     moon,
     parent,
@@ -2385,6 +2418,47 @@ for (const moon of majorMoons) {
     orbitPositions,
   })
 }
+
+
+// --------------------------------------------------
+// BODY TRACKING
+// --------------------------------------------------
+
+const bodyTrackingHandler =
+  new ScreenSpaceEventHandler(
+    viewer.scene.canvas
+  )
+
+bodyTrackingHandler.setInputAction(
+  (
+    movement: {
+      position: Cartesian2
+    }
+  ) => {
+    const picked =
+      viewer.scene.pick(
+        movement.position
+      ) as
+        | {
+          id?: Entity
+        }
+        | undefined
+
+    if (
+      picked?.id &&
+      trackableBodies.has(
+        picked.id
+      )
+    ) {
+      viewer.selectedEntity =
+        picked.id
+
+      viewer.trackedEntity =
+        picked.id
+    }
+  },
+  ScreenSpaceEventType.LEFT_DOUBLE_CLICK
+)
 
 
 // --------------------------------------------------
