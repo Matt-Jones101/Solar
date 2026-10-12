@@ -25,13 +25,7 @@ import './style.css'
 // CREATE VIEWER
 // --------------------------------------------------
 
-const viewer =
-  new Viewer(
-    'cesiumContainer',
-    {
-      selectionIndicator: false,
-    }
-  )
+const viewer = new Viewer('cesiumContainer')
 
 // Allow Solar-System-scale viewing distances.
 viewer.camera.frustum.far = 100_000_000_000_000
@@ -2501,87 +2495,23 @@ function getTrackableBodyAt(
   return undefined
 }
 
-let customTrackedBody:
-  Entity |
-  undefined
-
-let syncingTrackedEntity =
-  false
-
-function getBodyPosition(
+function selectBody(
   entity: Entity
 ) {
-  return entity
-    .position
-    ?.getValue(
-      viewer.clock.currentTime,
-      new Cartesian3()
-    ) as
-      | Cartesian3
-      | undefined
-}
-
-function focusBodyCamera(
-  entity: Entity
-) {
-  const position =
-    getBodyPosition(
-      entity
-    )
-
-  if (!position) {
-    return
-  }
-
-  customTrackedBody =
-    entity
-
-  const range =
-    Cartesian3.distance(
-      viewer.camera.positionWC,
-      position
-    )
-
-  const direction =
-    Cartesian3.clone(
-      viewer.camera.directionWC
-    )
-
-  const up =
-    Cartesian3.clone(
-      viewer.camera.upWC
-    )
-
-  const destination =
-    Cartesian3.subtract(
-      position,
-      Cartesian3.multiplyByScalar(
-        direction,
-        range,
-        new Cartesian3()
-      ),
-      new Cartesian3()
-    )
-
-  viewer.camera.setView({
-    destination,
-
-    orientation: {
-      direction,
-      up,
-    },
-  })
+  viewer.selectedEntity =
+    viewer.trackedEntity === entity
+      ? undefined
+      : entity
 }
 
 function trackBody(
   entity: Entity
 ) {
   viewer.selectedEntity =
-    entity
+    undefined
 
-  focusBodyCamera(
+  viewer.trackedEntity =
     entity
-  )
 }
 
 viewer
@@ -2592,34 +2522,17 @@ viewer
         | Entity
         | undefined
     ) => {
-      if (syncingTrackedEntity) {
-        return
-      }
-
       if (
         entity &&
         trackableBodies.has(
           entity
         )
       ) {
-        focusBodyCamera(
-          entity
-        )
-
-        syncingTrackedEntity =
-          true
-
-        viewer.trackedEntity =
+        viewer.selectedEntity =
           undefined
-
-        syncingTrackedEntity =
-          false
 
         return
       }
-
-      customTrackedBody =
-        undefined
     }
   )
 
@@ -2645,7 +2558,7 @@ viewer
       )
 
     if (entity) {
-      trackBody(
+      selectBody(
         entity
       )
     }
@@ -2706,21 +2619,6 @@ viewer.scene.canvas.addEventListener(
   },
   true
 )
-
-function updateCustomTrackedBodyCamera() {
-  if (!customTrackedBody) {
-    return
-  }
-
-  if (
-    customTrackedBody &&
-    viewer.selectedEntity !==
-      customTrackedBody
-  ) {
-    viewer.selectedEntity =
-      customTrackedBody
-  }
-}
 
 
 // --------------------------------------------------
@@ -3521,13 +3419,6 @@ viewer.scene.preRender.addEventListener(() => {
   hideAllBillboardsForLocalBodyView(
     deltaSeconds
   )
-
-
-  // --------------------------------------------------
-  // BODY TRACKING
-  // --------------------------------------------------
-
-  updateCustomTrackedBodyCamera()
 
 
   // --------------------------------------------------
