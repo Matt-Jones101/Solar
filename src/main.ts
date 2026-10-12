@@ -4175,9 +4175,6 @@ function hideBillboardForLocalBodyView(
   state: BillboardState,
   deltaSeconds: number
 ) {
-  state.visible =
-    false
-
   moveBillboardAlphaToward(
     billboardColor,
     state,
@@ -4311,6 +4308,10 @@ viewer.scene.preUpdate.addEventListener(() => {
   updateRenderedBodyPositions(
     currentTime,
     updatePlanetOrbitShapes
+  )
+
+  refreshEntityDisplayNow(
+    currentTime
   )
 
 
