@@ -2640,15 +2640,6 @@ function trackBody(
   viewer.selectedEntity =
     entity
 
-  syncingTrackedEntity =
-    true
-
-  viewer.trackedEntity =
-    entity
-
-  syncingTrackedEntity =
-    false
-
   focusBodyCamera(
     entity
   )
@@ -2675,6 +2666,16 @@ viewer
         focusBodyCamera(
           entity
         )
+
+        syncingTrackedEntity =
+          true
+
+        viewer.trackedEntity =
+          undefined
+
+        syncingTrackedEntity =
+          false
+
         return
       }
 
@@ -2766,21 +2767,6 @@ function updateCustomTrackedBodyCamera() {
   keepTrackedBodyCentred(
     position
   )
-
-  if (
-    customTrackedBody &&
-    viewer.trackedEntity !==
-      customTrackedBody
-  ) {
-    syncingTrackedEntity =
-      true
-
-    viewer.trackedEntity =
-      customTrackedBody
-
-    syncingTrackedEntity =
-      false
-  }
 
   if (
     customTrackedBody &&
@@ -3128,14 +3114,7 @@ function drawOrbitOverlay() {
   }
 
   const localBodyView =
-    planetRenderData.some(
-      (renderData) =>
-        renderData.billboardState.hiddenBySize
-    ) ||
-    moonRenderData.some(
-      (renderData) =>
-        renderData.billboardState.hiddenBySize
-    )
+    isLocalBodyView()
 
   const sunGap =
     createOrbitGap(
@@ -3418,6 +3397,67 @@ function updateMoonBillboardFade(
   )
 }
 
+function isLocalBodyView() {
+  return (
+    sunBillboardState.hiddenBySize ||
+    planetRenderData.some(
+      (renderData) =>
+        renderData.billboardState.hiddenBySize
+    ) ||
+    moonRenderData.some(
+      (renderData) =>
+        renderData.billboardState.hiddenBySize
+    )
+  )
+}
+
+function hideBillboardForLocalBodyView(
+  billboardColor: ConstantProperty,
+  state: BillboardState,
+  deltaSeconds: number
+) {
+  state.visible =
+    false
+
+  moveBillboardAlphaToward(
+    billboardColor,
+    state,
+    0,
+    deltaSeconds,
+    0.2
+  )
+}
+
+function hideAllBillboardsForLocalBodyView(
+  deltaSeconds: number
+) {
+  if (!isLocalBodyView()) {
+    return
+  }
+
+  hideBillboardForLocalBodyView(
+    sunBillboardColor,
+    sunBillboardState,
+    deltaSeconds
+  )
+
+  for (const renderData of planetRenderData) {
+    hideBillboardForLocalBodyView(
+      renderData.billboardColor,
+      renderData.billboardState,
+      deltaSeconds
+    )
+  }
+
+  for (const renderData of moonRenderData) {
+    hideBillboardForLocalBodyView(
+      renderData.billboardColor,
+      renderData.billboardState,
+      deltaSeconds
+    )
+  }
+}
+
 
 // --------------------------------------------------
 // UPDATE EVERYTHING EACH FRAME
@@ -3533,6 +3573,15 @@ viewer.scene.preRender.addEventListener(() => {
       deltaSeconds
     )
   }
+
+
+  // --------------------------------------------------
+  // LOCAL BODY VIEW
+  // --------------------------------------------------
+
+  hideAllBillboardsForLocalBodyView(
+    deltaSeconds
+  )
 
 
   // --------------------------------------------------
