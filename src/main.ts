@@ -25,7 +25,13 @@ import './style.css'
 // CREATE VIEWER
 // --------------------------------------------------
 
-const viewer = new Viewer('cesiumContainer')
+const viewer =
+  new Viewer(
+    'cesiumContainer',
+    {
+      selectionIndicator: false,
+    }
+  )
 
 // Allow Solar-System-scale viewing distances.
 viewer.camera.frustum.far = 100_000_000_000_000
@@ -2198,9 +2204,6 @@ const sunEntity = viewer.entities.add({
 
     color:
       sunBillboardColor,
-
-    disableDepthTestDistance:
-      Number.POSITIVE_INFINITY,
   },
 })
 
@@ -2502,10 +2505,6 @@ let customTrackedBody:
   Entity |
   undefined
 
-let customTrackedBodyPosition:
-  Cartesian3 |
-  undefined
-
 let syncingTrackedEntity =
   false
 
@@ -2536,11 +2535,6 @@ function focusBodyCamera(
 
   customTrackedBody =
     entity
-
-  customTrackedBodyPosition =
-    Cartesian3.clone(
-      position
-    )
 
   const range =
     Cartesian3.distance(
@@ -2626,8 +2620,6 @@ viewer
 
       customTrackedBody =
         undefined
-      customTrackedBodyPosition =
-        undefined
     }
   )
 
@@ -2637,6 +2629,29 @@ viewer
   .removeInputAction(
     ScreenSpaceEventType.LEFT_DOUBLE_CLICK
   )
+
+viewer
+  .cesiumWidget
+  .screenSpaceEventHandler
+  .setInputAction(
+  (
+    movement: {
+      position: Cartesian2
+    }
+  ) => {
+    const entity =
+      getTrackableBodyAt(
+        movement.position
+      )
+
+    if (entity) {
+      trackBody(
+        entity
+      )
+    }
+  },
+  ScreenSpaceEventType.LEFT_CLICK
+)
 
 viewer
   .cesiumWidget
@@ -2693,35 +2708,9 @@ viewer.scene.canvas.addEventListener(
 )
 
 function updateCustomTrackedBodyCamera() {
-  if (
-    !customTrackedBody ||
-    !customTrackedBodyPosition
-  ) {
+  if (!customTrackedBody) {
     return
   }
-
-  const position =
-    getBodyPosition(
-      customTrackedBody
-    )
-
-  if (!position) {
-    return
-  }
-
-  const delta =
-    Cartesian3.subtract(
-      position,
-      customTrackedBodyPosition,
-      new Cartesian3()
-    )
-
-  viewer.camera.position =
-    Cartesian3.add(
-      viewer.camera.position,
-      delta,
-      new Cartesian3()
-  )
 
   if (
     customTrackedBody &&
@@ -2731,11 +2720,6 @@ function updateCustomTrackedBodyCamera() {
     viewer.selectedEntity =
       customTrackedBody
   }
-
-  customTrackedBodyPosition =
-    Cartesian3.clone(
-      position
-    )
 }
 
 
@@ -3587,7 +3571,7 @@ viewer.camera.lookAt(
 
   new HeadingPitchRange(
     0,
-    -0.3,
-    sun_rad * 4
+    -0.45,
+    AU * 90
   )
 )
