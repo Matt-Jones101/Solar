@@ -5,14 +5,19 @@ import {
   Cartesian3,
   ClockRange,
   Color,
+  ColorGeometryInstanceAttribute,
   ConstantPositionProperty,
   ConstantProperty,
   CubeMapPanorama,
+  EllipsoidGeometry,
   Entity,
+  GeometryInstance,
   HeadingPitchRange,
   JulianDate,
   Matrix3,
   Matrix4,
+  PerInstanceColorAppearance,
+  Primitive,
   SceneTransforms,
   ScreenSpaceEventType,
   Viewer,
@@ -1314,6 +1319,7 @@ type OrbitGapOptions = {
 type PlanetRenderData = {
   planet: PlanetData
   entity: Entity
+  bodyPrimitive: Primitive
   positionProperty: ConstantPositionProperty
   billboardColor: ConstantProperty
   billboardState: BillboardState
@@ -1328,6 +1334,7 @@ type MoonRenderData = {
   moon: MoonData
   parent: PlanetRenderData
   entity: Entity
+  bodyPrimitive: Primitive
   positionProperty: ConstantPositionProperty
   billboardColor: ConstantProperty
   billboardState: BillboardState
@@ -2278,6 +2285,80 @@ function makeCircleIcon(
   )
 }
 
+function createBodyPrimitive(
+  entity: Entity,
+  radius: number,
+  colour: string,
+  position: Cartesian3
+) {
+  return viewer.scene.primitives.add(
+    new Primitive({
+      geometryInstances:
+        new GeometryInstance({
+          id:
+            entity,
+
+          geometry:
+            new EllipsoidGeometry({
+              radii:
+                new Cartesian3(
+                  radius,
+                  radius,
+                  radius
+                ),
+
+              stackPartitions:
+                BODY_STACK_PARTITIONS,
+
+              slicePartitions:
+                BODY_SLICE_PARTITIONS,
+
+              vertexFormat:
+                PerInstanceColorAppearance
+                  .VERTEX_FORMAT,
+            }),
+
+          attributes: {
+            color:
+              ColorGeometryInstanceAttribute
+                .fromColor(
+                  Color.fromCssColorString(
+                    colour
+                  )
+                ),
+          },
+        }),
+
+      appearance:
+        new PerInstanceColorAppearance({
+          closed: true,
+          translucent: false,
+        }),
+
+      asynchronous:
+        false,
+
+      cull:
+        false,
+
+      modelMatrix:
+        Matrix4.fromTranslation(
+          position
+        ),
+    })
+  ) as Primitive
+}
+
+function updateBodyPrimitivePosition(
+  primitive: Primitive,
+  position: Cartesian3
+) {
+  Matrix4.fromTranslation(
+    position,
+    primitive.modelMatrix
+  )
+}
+
 
 // --------------------------------------------------
 // SUN
@@ -2317,6 +2398,9 @@ const sunEntity = viewer.entities.add({
     sunPositionProperty,
 
   ellipsoid: {
+    show:
+      false,
+
     radii:
       new Cartesian3(
         sun_rad,
@@ -2352,6 +2436,14 @@ const sunEntity = viewer.entities.add({
       Number.POSITIVE_INFINITY,
   },
 })
+
+const sunBodyPrimitive =
+  createBodyPrimitive(
+    sunEntity,
+    sun_rad,
+    '#ffb300',
+    sunRenderPosition
+  )
 
 trackableBodies.add(
   sunEntity
@@ -2449,6 +2541,9 @@ for (const planet of planets) {
       positionProperty,
 
     ellipsoid: {
+      show:
+        false,
+
       radii:
         new Cartesian3(
           planet.radius,
@@ -2485,6 +2580,14 @@ for (const planet of planets) {
     },
   })
 
+  const bodyPrimitive =
+    createBodyPrimitive(
+      planetEntity,
+      planet.radius,
+      planet.colour,
+      initialPosition
+    )
+
   trackableBodies.add(
     planetEntity
   )
@@ -2492,6 +2595,7 @@ for (const planet of planets) {
   planetRenderData.push({
     planet,
     entity: planetEntity,
+    bodyPrimitive,
     positionProperty,
     billboardColor,
     billboardState,
@@ -2605,6 +2709,9 @@ for (const moon of majorMoons) {
       positionProperty,
 
     ellipsoid: {
+      show:
+        false,
+
       radii:
         new Cartesian3(
           moon.radius,
@@ -2641,6 +2748,14 @@ for (const moon of majorMoons) {
     },
   })
 
+  const bodyPrimitive =
+    createBodyPrimitive(
+      moonEntity,
+      moon.radius,
+      moon.colour,
+      initialPosition
+    )
+
   trackableBodies.add(
     moonEntity
   )
@@ -2649,6 +2764,7 @@ for (const moon of majorMoons) {
     moon,
     parent,
     entity: moonEntity,
+    bodyPrimitive,
     positionProperty,
     billboardColor,
     billboardState,
@@ -2870,6 +2986,11 @@ function updateRenderedBodyPositions(
     sunRenderPosition
   )
 
+  updateBodyPrimitivePosition(
+    sunBodyPrimitive,
+    sunRenderPosition
+  )
+
   for (const renderData of planetRenderData) {
     renderData.currentPosition =
       toRenderPosition(
@@ -2878,6 +2999,11 @@ function updateRenderedBodyPositions(
       )
 
     renderData.positionProperty.setValue(
+      renderData.currentPosition
+    )
+
+    updateBodyPrimitivePosition(
+      renderData.bodyPrimitive,
       renderData.currentPosition
     )
 
@@ -2904,6 +3030,11 @@ function updateRenderedBodyPositions(
       )
 
     renderData.positionProperty.setValue(
+      renderData.currentPosition
+    )
+
+    updateBodyPrimitivePosition(
+      renderData.bodyPrimitive,
       renderData.currentPosition
     )
 
