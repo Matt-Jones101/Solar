@@ -26,6 +26,14 @@ const viewer = new Viewer('cesiumContainer')
 // Allow Solar-System-scale viewing distances.
 viewer.camera.frustum.far = 100_000_000_000_000
 
+type SolarCameraController =
+  typeof viewer.scene.screenSpaceCameraController & {
+    _maximumZoomRate?: number
+  }
+
+const cameraController =
+  viewer.scene.screenSpaceCameraController as SolarCameraController
+
 
 // --------------------------------------------------
 // REMOVE EARTH-SPECIFIC CESIUM FEATURES
@@ -45,7 +53,13 @@ if (viewer.scene.moon) {
 if (viewer.scene.skyBox) {
   viewer.scene.skyBox.show = false
 }
-viewer.scene.screenSpaceCameraController.enableCollisionDetection = false
+cameraController.enableCollisionDetection = false
+
+// Cesium's default maximum zoom rate is roughly the
+// Sun-Pluto distance. That is sensible for Earth scenes,
+// but it feels artificially slow when viewing the whole
+// Solar System from far outside Neptune and Pluto.
+cameraController._maximumZoomRate = 100_000_000_000_000
 
 
 // --------------------------------------------------
@@ -1384,6 +1398,27 @@ const planets: PlanetData[] = [
     longitudeAscendingNode: {
       base: 131.78422574,
       rate: -0.00508664,
+    },
+  },
+
+  {
+    name: 'Pluto',
+    radius: 1_188_300,
+    colour: '#a8947a',
+
+    a: { base: 39.48211675, rate: -0.00031596 },
+    e: { base: 0.24882730, rate: 0.00005170 },
+    i: { base: 17.14001206, rate: 0.00004818 },
+    L: { base: 238.92903833, rate: 145.20780515 },
+
+    longitudePerihelion: {
+      base: 224.06891629,
+      rate: -0.04062942,
+    },
+
+    longitudeAscendingNode: {
+      base: 110.30393684,
+      rate: -0.01183482,
     },
   },
 ]
