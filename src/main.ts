@@ -1200,12 +1200,11 @@ const sun_rad = 696_340_000
 // Sun is at the origin.
 const sun_pos = Cartesian3.ZERO
 
-const BODY_STACK_PARTITIONS = 192
-const BODY_SLICE_PARTITIONS = 192
-const BODY_SUBDIVISIONS = 512
+const BODY_STACK_PARTITIONS = 128
+const BODY_SLICE_PARTITIONS = 128
 
-const MOON_ICON_FADE_OUT_PIXEL_DIAMETER = 28
-const MOON_ICON_FADE_IN_PIXEL_DIAMETER = 26
+const MOON_ICON_FADE_OUT_PIXEL_DIAMETER = 96
+const MOON_ICON_FADE_IN_PIXEL_DIAMETER = 88
 
 // J2000 obliquity.
 //
@@ -2267,9 +2266,6 @@ const sunEntity = viewer.entities.add({
     slicePartitions:
       BODY_SLICE_PARTITIONS,
 
-    subdivisions:
-      BODY_SUBDIVISIONS,
-
     material:
       Color.fromCssColorString(
         '#ffb300'
@@ -2396,9 +2392,6 @@ for (const planet of planets) {
 
       slicePartitions:
         BODY_SLICE_PARTITIONS,
-
-      subdivisions:
-        BODY_SUBDIVISIONS,
 
       material:
         Color.fromCssColorString(
@@ -2551,9 +2544,6 @@ for (const moon of majorMoons) {
       slicePartitions:
         BODY_SLICE_PARTITIONS,
 
-      subdivisions:
-        BODY_SUBDIVISIONS,
-
       material:
         Color.fromCssColorString(
           moon.colour
@@ -2664,7 +2654,7 @@ function getEntityPosition(
       | undefined
 }
 
-function getCameraConstraintAxis(
+function getCameraConstraintAxisWorld(
   entity:
     | Entity
     | undefined
@@ -2711,11 +2701,19 @@ function updateCameraConstraintAxis(
     | undefined =
       activeCameraTargetEntity
 ) {
-  viewer.camera.constrainedAxis =
-    Cartesian3.clone(
-      getCameraConstraintAxis(
+  const localAxis =
+    Matrix4.multiplyByPointAsVector(
+      viewer.camera.inverseTransform,
+      getCameraConstraintAxisWorld(
         entity
-      )
+      ),
+      new Cartesian3()
+    )
+
+  viewer.camera.constrainedAxis =
+    Cartesian3.normalize(
+      localAxis,
+      localAxis
     )
 }
 
