@@ -15,6 +15,7 @@ import {
   Matrix4,
   SceneTransforms,
   ScreenSpaceEventType,
+  TrackingReferenceFrame,
   Transforms,
   Viewer,
 } from 'cesium'
@@ -1197,6 +1198,10 @@ const sun_rad = 696_340_000
 // Sun is at the origin.
 const sun_pos = Cartesian3.ZERO
 
+const BODY_STACK_PARTITIONS = 96
+const BODY_SLICE_PARTITIONS = 96
+const BODY_SUBDIVISIONS = 256
+
 // J2000 obliquity.
 //
 // Obliquity is the angle between Earth's equatorial
@@ -2186,6 +2191,15 @@ const sunEntity = viewer.entities.add({
         sun_rad
       ),
 
+    stackPartitions:
+      BODY_STACK_PARTITIONS,
+
+    slicePartitions:
+      BODY_SLICE_PARTITIONS,
+
+    subdivisions:
+      BODY_SUBDIVISIONS,
+
     material:
       Color.fromCssColorString(
         '#ffb300'
@@ -2203,6 +2217,9 @@ const sunEntity = viewer.entities.add({
 
     color:
       sunBillboardColor,
+
+    disableDepthTestDistance:
+      Number.POSITIVE_INFINITY,
   },
 })
 
@@ -2296,6 +2313,9 @@ for (const planet of planets) {
     position:
       positionProperty,
 
+    trackingReferenceFrame:
+      TrackingReferenceFrame.ENU,
+
     ellipsoid: {
       radii:
         new Cartesian3(
@@ -2303,6 +2323,15 @@ for (const planet of planets) {
           planet.radius,
           planet.radius
         ),
+
+      stackPartitions:
+        BODY_STACK_PARTITIONS,
+
+      slicePartitions:
+        BODY_SLICE_PARTITIONS,
+
+      subdivisions:
+        BODY_SUBDIVISIONS,
 
       material:
         Color.fromCssColorString(
@@ -2435,6 +2464,9 @@ for (const moon of majorMoons) {
     position:
       positionProperty,
 
+    trackingReferenceFrame:
+      TrackingReferenceFrame.ENU,
+
     ellipsoid: {
       radii:
         new Cartesian3(
@@ -2442,6 +2474,15 @@ for (const moon of majorMoons) {
           moon.radius,
           moon.radius
         ),
+
+      stackPartitions:
+        BODY_STACK_PARTITIONS,
+
+      slicePartitions:
+        BODY_SLICE_PARTITIONS,
+
+      subdivisions:
+        BODY_SUBDIVISIONS,
 
       material:
         Color.fromCssColorString(
@@ -2524,9 +2565,151 @@ function selectBody(
       : entity
 }
 
-function preserveCurrentTrackingOffset(
-  entity: Entity
+type TrackingCameraState = {
+  positionWC: Cartesian3
+  directionWC: Cartesian3
+  upWC: Cartesian3
+}
+
+let cancelPendingTrackingCameraRestore:
+  | (() => void)
+  | undefined
+
+function restoreCameraStateInCurrentFrame(
+  state: TrackingCameraState
 ) {
+  const inverseTransform =
+    Matrix4.inverseTransformation(
+      viewer.camera.transform,
+      new Matrix4()
+    )
+
+  Matrix4.multiplyByPoint(
+    inverseTransform,
+    state.positionWC,
+    viewer.camera.position
+  )
+
+  Matrix4.multiplyByPointAsVector(
+    inverseTransform,
+    state.directionWC,
+    viewer.camera.direction
+  )
+
+  Cartesian3.normalize(
+    viewer.camera.direction,
+    viewer.camera.direction
+  )
+
+  Matrix4.multiplyByPointAsVector(
+    inverseTransform,
+    state.upWC,
+    viewer.camera.up
+  )
+
+  const directionComponent =
+    Cartesian3.multiplyByScalar(
+      viewer.camera.direction,
+      Cartesian3.dot(
+        viewer.camera.up,
+        viewer.camera.direction
+      ),
+      new Cartesian3()
+    )
+
+  Cartesian3.subtract(
+    viewer.camera.up,
+    directionComponent,
+    viewer.camera.up
+  )
+
+  if (
+    Cartesian3.magnitude(
+      viewer.camera.up
+    ) < 1e-7
+  ) {
+    Cartesian3.clone(
+      Cartesian3.UNIT_Z,
+      viewer.camera.up
+    )
+  }
+
+  Cartesian3.normalize(
+    viewer.camera.up,
+    viewer.camera.up
+  )
+
+  Cartesian3.cross(
+    viewer.camera.direction,
+    viewer.camera.up,
+    viewer.camera.right
+  )
+
+  Cartesian3.normalize(
+    viewer.camera.right,
+    viewer.camera.right
+  )
+
+  Cartesian3.cross(
+    viewer.camera.right,
+    viewer.camera.direction,
+    viewer.camera.up
+  )
+
+  Cartesian3.normalize(
+    viewer.camera.up,
+    viewer.camera.up
+  )
+}
+
+function scheduleCameraRestoreAfterTrackingSwitch(
+  entity: Entity,
+  state: TrackingCameraState
+) {
+  cancelPendingTrackingCameraRestore?.()
+
+  let framesRemaining = 2
+  let removeListener:
+    | (() => void)
+    | undefined
+
+  const onPostRender = () => {
+    if (viewer.trackedEntity !== entity) {
+      removeListener?.()
+      cancelPendingTrackingCameraRestore =
+        undefined
+
+      return
+    }
+
+    restoreCameraStateInCurrentFrame(
+      state
+    )
+
+    framesRemaining -= 1
+
+    if (framesRemaining <= 0) {
+      removeListener?.()
+      cancelPendingTrackingCameraRestore =
+        undefined
+    }
+  }
+
+  removeListener =
+    viewer.scene.postRender.addEventListener(
+      onPostRender
+    )
+
+  cancelPendingTrackingCameraRestore = () => {
+    removeListener?.()
+    cancelPendingTrackingCameraRestore =
+      undefined
+  }
+}
+
+function captureTrackingCameraState(
+  entity: Entity
+): TrackingCameraState | undefined {
   const position =
     entity
       .position
@@ -2538,7 +2721,7 @@ function preserveCurrentTrackingOffset(
         | undefined
 
   if (!position) {
-    return
+    return undefined
   }
 
   const transform =
@@ -2558,11 +2741,21 @@ function preserveCurrentTrackingOffset(
       position
     )
 
+  const directionWC =
+    Cartesian3.clone(
+      viewer.camera.directionWC
+    )
+
+  const upWC =
+    Cartesian3.clone(
+      viewer.camera.upWC
+    )
+
   const destination =
     Cartesian3.subtract(
       position,
       Cartesian3.multiplyByScalar(
-        viewer.camera.directionWC,
+        directionWC,
         range,
         new Cartesian3()
       ),
@@ -2575,6 +2768,15 @@ function preserveCurrentTrackingOffset(
       destination,
       new Cartesian3()
     )
+
+  return {
+    positionWC:
+      destination,
+
+    directionWC,
+
+    upWC,
+  }
 }
 
 function trackBody(
@@ -2583,12 +2785,20 @@ function trackBody(
   viewer.selectedEntity =
     undefined
 
-  preserveCurrentTrackingOffset(
-    entity
-  )
+  const cameraState =
+    captureTrackingCameraState(
+      entity
+    )
 
   viewer.trackedEntity =
     entity
+
+  if (cameraState) {
+    scheduleCameraRestoreAfterTrackingSwitch(
+      entity,
+      cameraState
+    )
+  }
 }
 
 viewer
@@ -3197,7 +3407,7 @@ function updateBillboardFade(
   state: BillboardState,
   deltaSeconds: number,
   fadeOutThreshold: number = 16,
-  fadeInThreshold: number = 15,
+  fadeInThreshold: number = 15.5,
   fadeDuration: number = 0.4
 ) {
   const distance =
@@ -3373,14 +3583,6 @@ function hideAllBillboardsForLocalBodyView(
   )
 
   for (const renderData of planetRenderData) {
-    hideBillboardForLocalBodyView(
-      renderData.billboardColor,
-      renderData.billboardState,
-      deltaSeconds
-    )
-  }
-
-  for (const renderData of moonRenderData) {
     hideBillboardForLocalBodyView(
       renderData.billboardColor,
       renderData.billboardState,
