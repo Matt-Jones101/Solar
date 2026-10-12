@@ -74,9 +74,14 @@ cameraController._maximumZoomRate = 100_000_000_000_000
 const DEFAULT_CAMERA_ZOOM_FACTOR =
   cameraController.zoomFactor
 
+const DEFAULT_MINIMUM_ZOOM_DISTANCE =
+  cameraController.minimumZoomDistance
+
 const DEFAULT_MINIMUM_ZOOM_RATE = 20
 
 const TRACKED_BODY_ZOOM_FACTOR = 8
+
+const SURFACE_ZOOM_LIMIT_MULTIPLIER = 1.04
 
 const orbitOverlayCanvas =
   document.createElement('canvas')
@@ -2815,21 +2820,6 @@ function getEntityRadius(
   return undefined
 }
 
-function isEntityMoon(
-  entity:
-    | Entity
-    | undefined
-) {
-  if (!entity) {
-    return false
-  }
-
-  return moonRenderData.some(
-    (renderData) =>
-      renderData.entity === entity
-  )
-}
-
 function updateRenderOriginForCameraTarget() {
   if (!activeCameraTargetEntity) {
     setRenderOrigin(
@@ -2911,6 +2901,16 @@ function updateRenderedBodyPositions(
       )
     )
   }
+}
+
+function refreshEntityDisplayNow(
+  currentTime: JulianDate
+) {
+  viewer.dataSourceDisplay.update(
+    currentTime
+  )
+
+  viewer.scene.requestRender()
 }
 
 function getCameraConstraintAxisWorld(
@@ -3022,6 +3022,9 @@ function updateCameraZoomRate() {
     cameraController._minimumZoomRate =
       DEFAULT_MINIMUM_ZOOM_RATE
 
+    cameraController.minimumZoomDistance =
+      DEFAULT_MINIMUM_ZOOM_DISTANCE
+
     cameraController._maximumZoomRate =
       100_000_000_000_000
 
@@ -3039,6 +3042,10 @@ function updateCameraZoomRate() {
 
   cameraController.zoomFactor =
     TRACKED_BODY_ZOOM_FACTOR
+
+  cameraController.minimumZoomDistance =
+    radius *
+    SURFACE_ZOOM_LIMIT_MULTIPLIER
 
   cameraController._minimumZoomRate =
     Math.max(
@@ -3307,6 +3314,10 @@ function trackBody(
   updateRenderedBodyPositions(
     viewer.clock.currentTime,
     false
+  )
+
+  refreshEntityDisplayNow(
+    viewer.clock.currentTime
   )
 
   const position =
@@ -4182,14 +4193,6 @@ function hideAllBillboardsForLocalBodyView(
     )
   }
 
-  if (
-    !isEntityMoon(
-      activeCameraTargetEntity
-    )
-  ) {
-    return
-  }
-
   for (const renderData of moonRenderData) {
     hideBillboardForLocalBodyView(
       renderData.billboardColor,
@@ -4284,6 +4287,10 @@ viewer.scene.preRender.addEventListener(() => {
   updateRenderedBodyPositions(
     currentTime,
     updatePlanetOrbitShapes
+  )
+
+  refreshEntityDisplayNow(
+    currentTime
   )
 
 
