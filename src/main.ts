@@ -1214,6 +1214,19 @@ type PlanetData = {
   longitudeAscendingNode: OrbitalValue
 }
 
+type MoonData = {
+  name: string
+  parent: string
+  radius: number
+  orbitRadius: number
+  orbitalPeriodDays: number
+  colour: string
+  phaseOffset: number
+  inclination: number
+  longitudeAscendingNode: number
+  retrograde?: boolean
+}
+
 type BillboardState = {
   alpha: number
   visible: boolean
@@ -1221,6 +1234,16 @@ type BillboardState = {
 
 type PlanetRenderData = {
   planet: PlanetData
+  positionProperty: ConstantPositionProperty
+  billboardColor: ConstantProperty
+  billboardState: BillboardState
+  currentPosition: Cartesian3
+  orbitPositions: ConstantProperty
+}
+
+type MoonRenderData = {
+  moon: MoonData
+  parent: PlanetRenderData
   positionProperty: ConstantPositionProperty
   billboardColor: ConstantProperty
   billboardState: BillboardState
@@ -1420,6 +1443,261 @@ const planets: PlanetData[] = [
       base: 110.30393684,
       rate: -0.01183482,
     },
+  },
+]
+
+const majorMoons: MoonData[] = [
+  {
+    name: 'Moon',
+    parent: 'Earth',
+    radius: 1_737_400,
+    orbitRadius: 384_400_000,
+    orbitalPeriodDays: 27.3217,
+    colour: '#c9c7bc',
+    phaseOffset: 45,
+    inclination: 5.1,
+    longitudeAscendingNode: 125,
+  },
+
+  {
+    name: 'Phobos',
+    parent: 'Mars',
+    radius: 11_100,
+    orbitRadius: 9_376_000,
+    orbitalPeriodDays: 0.3189,
+    colour: '#8a7a70',
+    phaseOffset: 20,
+    inclination: 1.1,
+    longitudeAscendingNode: 35,
+  },
+
+  {
+    name: 'Deimos',
+    parent: 'Mars',
+    radius: 6_200,
+    orbitRadius: 23_463_000,
+    orbitalPeriodDays: 1.2624,
+    colour: '#7b706a',
+    phaseOffset: 160,
+    inclination: 1.8,
+    longitudeAscendingNode: 80,
+  },
+
+  {
+    name: 'Io',
+    parent: 'Jupiter',
+    radius: 1_821_600,
+    orbitRadius: 421_800_000,
+    orbitalPeriodDays: 1.7691,
+    colour: '#d8c25b',
+    phaseOffset: 15,
+    inclination: 1.3,
+    longitudeAscendingNode: 25,
+  },
+
+  {
+    name: 'Europa',
+    parent: 'Jupiter',
+    radius: 1_560_800,
+    orbitRadius: 671_100_000,
+    orbitalPeriodDays: 3.5512,
+    colour: '#d6cdbf',
+    phaseOffset: 105,
+    inclination: 1.8,
+    longitudeAscendingNode: 35,
+  },
+
+  {
+    name: 'Ganymede',
+    parent: 'Jupiter',
+    radius: 2_634_100,
+    orbitRadius: 1_070_400_000,
+    orbitalPeriodDays: 7.1546,
+    colour: '#a99577',
+    phaseOffset: 205,
+    inclination: 2.2,
+    longitudeAscendingNode: 45,
+  },
+
+  {
+    name: 'Callisto',
+    parent: 'Jupiter',
+    radius: 2_410_300,
+    orbitRadius: 1_882_700_000,
+    orbitalPeriodDays: 16.6890,
+    colour: '#806f63',
+    phaseOffset: 300,
+    inclination: 2.0,
+    longitudeAscendingNode: 60,
+  },
+
+  {
+    name: 'Mimas',
+    parent: 'Saturn',
+    radius: 198_200,
+    orbitRadius: 185_540_000,
+    orbitalPeriodDays: 0.9424,
+    colour: '#b8b4aa',
+    phaseOffset: 10,
+    inclination: 1.6,
+    longitudeAscendingNode: 75,
+  },
+
+  {
+    name: 'Enceladus',
+    parent: 'Saturn',
+    radius: 252_100,
+    orbitRadius: 238_040_000,
+    orbitalPeriodDays: 1.3702,
+    colour: '#d9dce0',
+    phaseOffset: 70,
+    inclination: 0.0,
+    longitudeAscendingNode: 80,
+  },
+
+  {
+    name: 'Tethys',
+    parent: 'Saturn',
+    radius: 531_100,
+    orbitRadius: 294_670_000,
+    orbitalPeriodDays: 1.8878,
+    colour: '#d0cbc0',
+    phaseOffset: 125,
+    inclination: 1.1,
+    longitudeAscendingNode: 85,
+  },
+
+  {
+    name: 'Dione',
+    parent: 'Saturn',
+    radius: 561_400,
+    orbitRadius: 377_420_000,
+    orbitalPeriodDays: 2.7369,
+    colour: '#c7c5bf',
+    phaseOffset: 185,
+    inclination: 0.0,
+    longitudeAscendingNode: 90,
+  },
+
+  {
+    name: 'Rhea',
+    parent: 'Saturn',
+    radius: 763_800,
+    orbitRadius: 527_070_000,
+    orbitalPeriodDays: 4.5182,
+    colour: '#b9b7b0',
+    phaseOffset: 240,
+    inclination: 0.3,
+    longitudeAscendingNode: 95,
+  },
+
+  {
+    name: 'Titan',
+    parent: 'Saturn',
+    radius: 2_574_700,
+    orbitRadius: 1_221_870_000,
+    orbitalPeriodDays: 15.9454,
+    colour: '#c99042',
+    phaseOffset: 305,
+    inclination: 0.3,
+    longitudeAscendingNode: 105,
+  },
+
+  {
+    name: 'Iapetus',
+    parent: 'Saturn',
+    radius: 734_500,
+    orbitRadius: 3_560_820_000,
+    orbitalPeriodDays: 79.3215,
+    colour: '#928a7f',
+    phaseOffset: 30,
+    inclination: 15.5,
+    longitudeAscendingNode: 120,
+  },
+
+  {
+    name: 'Miranda',
+    parent: 'Uranus',
+    radius: 235_800,
+    orbitRadius: 129_390_000,
+    orbitalPeriodDays: 1.4135,
+    colour: '#aaa9a2',
+    phaseOffset: 40,
+    inclination: 4.3,
+    longitudeAscendingNode: 210,
+  },
+
+  {
+    name: 'Ariel',
+    parent: 'Uranus',
+    radius: 578_900,
+    orbitRadius: 191_020_000,
+    orbitalPeriodDays: 2.5204,
+    colour: '#c8c7bf',
+    phaseOffset: 110,
+    inclination: 0.0,
+    longitudeAscendingNode: 215,
+  },
+
+  {
+    name: 'Umbriel',
+    parent: 'Uranus',
+    radius: 584_700,
+    orbitRadius: 266_300_000,
+    orbitalPeriodDays: 4.1442,
+    colour: '#716d68',
+    phaseOffset: 175,
+    inclination: 0.1,
+    longitudeAscendingNode: 220,
+  },
+
+  {
+    name: 'Titania',
+    parent: 'Uranus',
+    radius: 788_900,
+    orbitRadius: 435_910_000,
+    orbitalPeriodDays: 8.7059,
+    colour: '#b7b3aa',
+    phaseOffset: 245,
+    inclination: 0.1,
+    longitudeAscendingNode: 225,
+  },
+
+  {
+    name: 'Oberon',
+    parent: 'Uranus',
+    radius: 761_400,
+    orbitRadius: 583_520_000,
+    orbitalPeriodDays: 13.4632,
+    colour: '#9f9587',
+    phaseOffset: 315,
+    inclination: 0.1,
+    longitudeAscendingNode: 230,
+  },
+
+  {
+    name: 'Triton',
+    parent: 'Neptune',
+    radius: 1_353_400,
+    orbitRadius: 354_760_000,
+    orbitalPeriodDays: 5.8769,
+    colour: '#d0aaa0',
+    phaseOffset: 135,
+    inclination: 157.0,
+    longitudeAscendingNode: 260,
+    retrograde: true,
+  },
+
+  {
+    name: 'Charon',
+    parent: 'Pluto',
+    radius: 606_000,
+    orbitRadius: 19_596_000,
+    orbitalPeriodDays: 6.3872,
+    colour: '#b0a59c',
+    phaseOffset: 280,
+    inclination: 0.0,
+    longitudeAscendingNode: 110,
   },
 ]
 
@@ -1689,6 +1967,102 @@ function createOrbitPositions(
   return positions
 }
 
+function getMoonPosition(
+  moon: MoonData,
+  parentPosition: Cartesian3,
+  time: JulianDate
+): Cartesian3 {
+  const daysSinceJ2000 =
+    getJulianDay(
+      time
+    ) -
+    2_451_545.0
+
+  const direction =
+    moon.retrograde
+      ? -1
+      : 1
+
+  const orbitAngle =
+    degToRad(
+      moon.phaseOffset
+    ) +
+    direction *
+    (
+      daysSinceJ2000 /
+      moon.orbitalPeriodDays
+    ) *
+    Math.PI *
+    2
+
+  const relativePosition =
+    orbitalPlaneToWorld(
+      moon.orbitRadius * Math.cos(
+        orbitAngle
+      ),
+      moon.orbitRadius * Math.sin(
+        orbitAngle
+      ),
+      degToRad(
+        moon.inclination
+      ),
+      degToRad(
+        moon.longitudeAscendingNode
+      ),
+      0
+    )
+
+  return Cartesian3.add(
+    parentPosition,
+    relativePosition,
+    new Cartesian3()
+  )
+}
+
+function createMoonOrbitPositions(
+  moon: MoonData,
+  parentPosition: Cartesian3,
+  segments: number = 144
+): Cartesian3[] {
+  const positions: Cartesian3[] = []
+
+  for (let i = 0; i <= segments; i++) {
+    const orbitAngle =
+      (
+        i / segments
+      ) *
+      Math.PI *
+      2
+
+    const relativePosition =
+      orbitalPlaneToWorld(
+        moon.orbitRadius * Math.cos(
+          orbitAngle
+        ),
+        moon.orbitRadius * Math.sin(
+          orbitAngle
+        ),
+        degToRad(
+          moon.inclination
+        ),
+        degToRad(
+          moon.longitudeAscendingNode
+        ),
+        0
+      )
+
+    positions.push(
+      Cartesian3.add(
+        parentPosition,
+        relativePosition,
+        new Cartesian3()
+      )
+    )
+  }
+
+  return positions
+}
+
 
 // --------------------------------------------------
 // BILLBOARD ICON
@@ -1882,6 +2256,132 @@ for (const planet of planets) {
     positionProperty,
     billboardColor,
     billboardState,
+    currentPosition: initialPosition,
+    orbitPositions,
+  })
+}
+
+const moonRenderData: MoonRenderData[] = []
+
+for (const moon of majorMoons) {
+  const parent =
+    planetRenderData.find(
+      (
+        renderData
+      ) =>
+        renderData.planet.name === moon.parent
+    )
+
+  if (!parent) {
+    continue
+  }
+
+  const initialPosition =
+    getMoonPosition(
+      moon,
+      parent.currentPosition,
+      viewer.clock.currentTime
+    )
+
+  const positionProperty =
+    new ConstantPositionProperty(
+      initialPosition
+    )
+
+  const billboardColor =
+    new ConstantProperty(
+      Color.TRANSPARENT
+    )
+
+  const billboardState: BillboardState = {
+    alpha: 0,
+    visible: false,
+  }
+
+  const orbitPositions =
+    new ConstantProperty(
+      createMoonOrbitPositions(
+        moon,
+        parent.currentPosition
+      )
+    )
+
+
+  // --------------------------------------------------
+  // MOON ORBIT
+  // --------------------------------------------------
+
+  viewer.entities.add({
+    name:
+      `${moon.name} Orbit`,
+
+    polyline: {
+      positions:
+        orbitPositions,
+
+      width: 1,
+
+      arcType:
+        ArcType.NONE,
+
+      material:
+        Color
+          .fromCssColorString(
+            moon.colour
+          )
+          .withAlpha(0.25),
+    },
+  })
+
+
+  // --------------------------------------------------
+  // MOON
+  // --------------------------------------------------
+
+  viewer.entities.add({
+    name:
+      moon.name,
+
+    position:
+      positionProperty,
+
+    ellipsoid: {
+      radii:
+        new Cartesian3(
+          moon.radius,
+          moon.radius,
+          moon.radius
+        ),
+
+      material:
+        Color.fromCssColorString(
+          moon.colour
+        ),
+    },
+
+    billboard: {
+      image:
+        makeCircleIcon(
+          moon.colour
+        ),
+
+      width: 20,
+      height: 20,
+
+      color:
+        billboardColor,
+
+      disableDepthTestDistance:
+        Number.POSITIVE_INFINITY,
+    },
+  })
+
+  moonRenderData.push({
+    moon,
+    parent,
+    positionProperty,
+    billboardColor,
+    billboardState,
     orbitPositions,
   })
 }
@@ -1890,6 +2390,40 @@ for (const planet of planets) {
 // --------------------------------------------------
 // BILLBOARD FADE
 // --------------------------------------------------
+
+function moveBillboardAlphaToward(
+  billboardColor: ConstantProperty,
+  state: BillboardState,
+  targetAlpha: number,
+  deltaSeconds: number,
+  fadeDuration: number
+) {
+  const alphaStep =
+    deltaSeconds /
+    fadeDuration
+
+  if (state.alpha < targetAlpha) {
+    state.alpha =
+      Math.min(
+        targetAlpha,
+        state.alpha + alphaStep
+      )
+  }
+
+  if (state.alpha > targetAlpha) {
+    state.alpha =
+      Math.max(
+        targetAlpha,
+        state.alpha - alphaStep
+      )
+  }
+
+  billboardColor.setValue(
+    Color.WHITE.withAlpha(
+      state.alpha
+    )
+  )
+}
 
 function updateBillboardFade(
   position: Cartesian3,
@@ -1961,30 +2495,46 @@ function updateBillboardFade(
       ? 1
       : 0
 
-  const alphaStep =
-    deltaSeconds /
+  moveBillboardAlphaToward(
+    billboardColor,
+    state,
+    targetAlpha,
+    deltaSeconds,
     fadeDuration
+  )
+}
 
-  if (state.alpha < targetAlpha) {
-    state.alpha =
-      Math.min(
-        targetAlpha,
-        state.alpha + alphaStep
-      )
-  }
+function updateMoonBillboardFade(
+  position: Cartesian3,
+  radius: number,
+  billboardColor: ConstantProperty,
+  state: BillboardState,
+  parentBillboardState: BillboardState,
+  deltaSeconds: number
+) {
+  if (parentBillboardState.alpha > 0.01) {
+    state.visible = false
 
-  if (state.alpha > targetAlpha) {
-    state.alpha =
-      Math.max(
-        targetAlpha,
-        state.alpha - alphaStep
-      )
-  }
-
-  billboardColor.setValue(
-    Color.WHITE.withAlpha(
-      state.alpha
+    moveBillboardAlphaToward(
+      billboardColor,
+      state,
+      0,
+      deltaSeconds,
+      0.25
     )
+
+    return
+  }
+
+  updateBillboardFade(
+    position,
+    radius,
+    billboardColor,
+    state,
+    deltaSeconds,
+    4,
+    3.5,
+    0.25
   )
 }
 
@@ -2055,11 +2605,48 @@ viewer.scene.preRender.addEventListener(() => {
       position
     )
 
+    renderData.currentPosition =
+      position
+
     updateBillboardFade(
       position,
       renderData.planet.radius,
       renderData.billboardColor,
       renderData.billboardState,
+      deltaSeconds
+    )
+  }
+
+
+  // --------------------------------------------------
+  // MOONS
+  // --------------------------------------------------
+
+  for (const renderData of moonRenderData) {
+    const position =
+      getMoonPosition(
+        renderData.moon,
+        renderData.parent.currentPosition,
+        currentTime
+      )
+
+    renderData.positionProperty.setValue(
+      position
+    )
+
+    renderData.orbitPositions.setValue(
+      createMoonOrbitPositions(
+        renderData.moon,
+        renderData.parent.currentPosition
+      )
+    )
+
+    updateMoonBillboardFade(
+      position,
+      renderData.moon.radius,
+      renderData.billboardColor,
+      renderData.billboardState,
+      renderData.parent.billboardState,
       deltaSeconds
     )
   }
