@@ -12,8 +12,10 @@ import {
   HeadingPitchRange,
   JulianDate,
   Matrix3,
+  Matrix4,
   SceneTransforms,
   ScreenSpaceEventType,
+  Transforms,
   Viewer,
 } from 'cesium'
 
@@ -2504,11 +2506,51 @@ function selectBody(
       : entity
 }
 
+function preserveCurrentTrackingOffset(
+  entity: Entity
+) {
+  const position =
+    entity
+      .position
+      ?.getValue(
+        viewer.clock.currentTime,
+        new Cartesian3()
+      ) as
+        | Cartesian3
+        | undefined
+
+  if (!position) {
+    return
+  }
+
+  const transform =
+    Transforms.eastNorthUpToFixedFrame(
+      position
+    )
+
+  const inverseTransform =
+    Matrix4.inverseTransformation(
+      transform,
+      new Matrix4()
+    )
+
+  entity.viewFrom =
+    Matrix4.multiplyByPoint(
+      inverseTransform,
+      viewer.camera.positionWC,
+      new Cartesian3()
+    )
+}
+
 function trackBody(
   entity: Entity
 ) {
   viewer.selectedEntity =
     undefined
+
+  preserveCurrentTrackingOffset(
+    entity
+  )
 
   viewer.trackedEntity =
     entity
@@ -3119,8 +3161,8 @@ function updateBillboardFade(
   billboardColor: ConstantProperty,
   state: BillboardState,
   deltaSeconds: number,
-  fadeOutThreshold: number = 5,
-  fadeInThreshold: number = 4.5,
+  fadeOutThreshold: number = 24,
+  fadeInThreshold: number = 20,
   fadeDuration: number = 0.4
 ) {
   const distance =
