@@ -2579,61 +2579,6 @@ function focusBodyCamera(
   })
 }
 
-function getTrackedBodyRange() {
-  if (
-    !customTrackedBody ||
-    !customTrackedBodyPosition
-  ) {
-    return undefined
-  }
-
-  return Cartesian3.distance(
-    viewer.camera.positionWC,
-    customTrackedBodyPosition
-  )
-}
-
-function keepTrackedBodyCentred(
-  position: Cartesian3
-) {
-  const range =
-    getTrackedBodyRange()
-
-  if (!range) {
-    return
-  }
-
-  const direction =
-    Cartesian3.clone(
-      viewer.camera.directionWC
-    )
-
-  const up =
-    Cartesian3.clone(
-      viewer.camera.upWC
-    )
-
-  const destination =
-    Cartesian3.subtract(
-      position,
-      Cartesian3.multiplyByScalar(
-        direction,
-        range,
-        new Cartesian3()
-      ),
-      new Cartesian3()
-    )
-
-  viewer.camera.setView({
-    destination,
-
-    orientation: {
-      direction,
-      up,
-    },
-  })
-}
-
 function trackBody(
   entity: Entity
 ) {
@@ -2764,8 +2709,18 @@ function updateCustomTrackedBodyCamera() {
     return
   }
 
-  keepTrackedBodyCentred(
-    position
+  const delta =
+    Cartesian3.subtract(
+      position,
+      customTrackedBodyPosition,
+      new Cartesian3()
+    )
+
+  viewer.camera.position =
+    Cartesian3.add(
+      viewer.camera.position,
+      delta,
+      new Cartesian3()
   )
 
   if (
