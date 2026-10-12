@@ -1,0 +1,19 @@
+{
+  "name": "solar",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0",
+    "vite-plugin-cesium": "^1.2.23"
+  },
+  "dependencies": {
+    "cesium": "^1.146.0"
+  }
+}
