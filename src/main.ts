@@ -2170,6 +2170,9 @@ const sunBillboardState: BillboardState = {
 const trackableBodies =
   new Set<Entity>()
 
+const bodyBillboardStates =
+  new Map<Entity, BillboardState>()
+
 const sunEntity = viewer.entities.add({
   name: 'Sun',
 
@@ -2205,6 +2208,11 @@ const sunEntity = viewer.entities.add({
 
 trackableBodies.add(
   sunEntity
+)
+
+bodyBillboardStates.set(
+  sunEntity,
+  sunBillboardState
 )
 
 
@@ -2321,6 +2329,11 @@ for (const planet of planets) {
 
   trackableBodies.add(
     planetEntity
+  )
+
+  bodyBillboardStates.set(
+    planetEntity,
+    billboardState
   )
 
   planetRenderData.push({
@@ -2457,6 +2470,11 @@ for (const moon of majorMoons) {
     moonEntity
   )
 
+  bodyBillboardStates.set(
+    moonEntity,
+    billboardState
+  )
+
   moonRenderData.push({
     moon,
     parent,
@@ -2534,10 +2552,27 @@ function preserveCurrentTrackingOffset(
       new Matrix4()
     )
 
+  const range =
+    Cartesian3.distance(
+      viewer.camera.positionWC,
+      position
+    )
+
+  const destination =
+    Cartesian3.subtract(
+      position,
+      Cartesian3.multiplyByScalar(
+        viewer.camera.directionWC,
+        range,
+        new Cartesian3()
+      ),
+      new Cartesian3()
+    )
+
   entity.viewFrom =
     Matrix4.multiplyByPoint(
       inverseTransform,
-      viewer.camera.positionWC,
+      destination,
       new Cartesian3()
     )
 }
@@ -3161,8 +3196,8 @@ function updateBillboardFade(
   billboardColor: ConstantProperty,
   state: BillboardState,
   deltaSeconds: number,
-  fadeOutThreshold: number = 24,
-  fadeInThreshold: number = 20,
+  fadeOutThreshold: number = 16,
+  fadeInThreshold: number = 15,
   fadeDuration: number = 0.4
 ) {
   const distance =
@@ -3290,6 +3325,23 @@ function isLocalBodyView() {
   )
 }
 
+function isTrackedBodyLocalView() {
+  const trackedEntity =
+    viewer.trackedEntity
+
+  if (!trackedEntity) {
+    return false
+  }
+
+  return Boolean(
+    bodyBillboardStates
+      .get(
+        trackedEntity
+      )
+      ?.hiddenBySize
+  )
+}
+
 function hideBillboardForLocalBodyView(
   billboardColor: ConstantProperty,
   state: BillboardState,
@@ -3310,7 +3362,7 @@ function hideBillboardForLocalBodyView(
 function hideAllBillboardsForLocalBodyView(
   deltaSeconds: number
 ) {
-  if (!isLocalBodyView()) {
+  if (!isTrackedBodyLocalView()) {
     return
   }
 
