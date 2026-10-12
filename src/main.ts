@@ -12,7 +12,6 @@ import {
   HeadingPitchRange,
   JulianDate,
   Matrix3,
-  ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   Viewer,
 } from 'cesium'
@@ -2115,6 +2114,9 @@ const sunBillboardState: BillboardState = {
 const trackableBodies =
   new Set<Entity>()
 
+const trackableBodyRadii =
+  new Map<Entity, number>()
+
 const sunEntity = viewer.entities.add({
   name: 'Sun',
 
@@ -2153,6 +2155,11 @@ const sunEntity = viewer.entities.add({
 
 trackableBodies.add(
   sunEntity
+)
+
+trackableBodyRadii.set(
+  sunEntity,
+  sun_rad
 )
 
 
@@ -2216,13 +2223,6 @@ for (const planet of planets) {
             planet.colour
           )
           .withAlpha(0.75),
-
-      depthFailMaterial:
-        Color
-          .fromCssColorString(
-            planet.colour
-          )
-          .withAlpha(0.75),
     },
   })
 
@@ -2271,6 +2271,11 @@ for (const planet of planets) {
 
   trackableBodies.add(
     planetEntity
+  )
+
+  trackableBodyRadii.set(
+    planetEntity,
+    planet.radius
   )
 
   planetRenderData.push({
@@ -2352,13 +2357,6 @@ for (const moon of majorMoons) {
             moon.colour
           )
           .withAlpha(0.65),
-
-      depthFailMaterial:
-        Color
-          .fromCssColorString(
-            moon.colour
-          )
-          .withAlpha(0.65),
     },
   })
 
@@ -2409,6 +2407,11 @@ for (const moon of majorMoons) {
     moonEntity
   )
 
+  trackableBodyRadii.set(
+    moonEntity,
+    moon.radius
+  )
+
   moonRenderData.push({
     moon,
     parent,
@@ -2424,40 +2427,143 @@ for (const moon of majorMoons) {
 // BODY TRACKING
 // --------------------------------------------------
 
-const bodyTrackingHandler =
-  new ScreenSpaceEventHandler(
-    viewer.scene.canvas
+function getTrackableBodyAt(
+  position: Cartesian2
+) {
+  const picked =
+    viewer.scene.pick(
+      position
+    ) as
+      | {
+        id?: Entity
+      }
+      | undefined
+
+  if (
+    picked?.id &&
+    trackableBodies.has(
+      picked.id
+    )
+  ) {
+    return picked.id
+  }
+
+  return undefined
+}
+
+function getTrackingRange(
+  entity: Entity
+) {
+  const radius =
+    trackableBodyRadii.get(
+      entity
+    ) ??
+    1_000_000
+
+  return Math.max(
+    radius * 25,
+    2_000_000
+  )
+}
+
+function trackBody(
+  entity: Entity
+) {
+  viewer.trackedEntity =
+    undefined
+
+  viewer.selectedEntity =
+    entity
+
+  void viewer
+    .flyTo(
+      entity,
+      {
+        duration: 0.45,
+
+        offset:
+          new HeadingPitchRange(
+            0,
+            -0.35,
+            getTrackingRange(
+              entity
+            )
+          ),
+      }
+    )
+    .then(
+      () => {
+        viewer.trackedEntity =
+          entity
+      }
+    )
+    .catch(
+      () => {
+        viewer.trackedEntity =
+          entity
+      }
+    )
+}
+
+viewer
+  .cesiumWidget
+  .screenSpaceEventHandler
+  .removeInputAction(
+    ScreenSpaceEventType.LEFT_DOUBLE_CLICK
   )
 
-bodyTrackingHandler.setInputAction(
+viewer
+  .cesiumWidget
+  .screenSpaceEventHandler
+  .setInputAction(
   (
     movement: {
       position: Cartesian2
     }
   ) => {
-    const picked =
-      viewer.scene.pick(
+    const entity =
+      getTrackableBodyAt(
         movement.position
-      ) as
-        | {
-          id?: Entity
-        }
-        | undefined
-
-    if (
-      picked?.id &&
-      trackableBodies.has(
-        picked.id
       )
-    ) {
-      viewer.selectedEntity =
-        picked.id
 
-      viewer.trackedEntity =
-        picked.id
+    if (entity) {
+      trackBody(
+        entity
+      )
     }
   },
   ScreenSpaceEventType.LEFT_DOUBLE_CLICK
+)
+
+viewer.scene.canvas.addEventListener(
+  'dblclick',
+  (event) => {
+    const bounds =
+      viewer
+        .scene
+        .canvas
+        .getBoundingClientRect()
+
+    const entity =
+      getTrackableBodyAt(
+        new Cartesian2(
+          event.clientX - bounds.left,
+          event.clientY - bounds.top
+        )
+      )
+
+    if (!entity) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopImmediatePropagation()
+
+    trackBody(
+      entity
+    )
+  },
+  true
 )
 
 
