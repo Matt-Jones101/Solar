@@ -9,6 +9,7 @@ import {
   ConstantPositionProperty,
   ConstantProperty,
   CubeMapPanorama,
+  Ellipsoid,
   EllipsoidGeometry,
   Entity,
   GeometryInstance,
@@ -42,6 +43,11 @@ viewer.camera.constrainedAxis =
 
 type SolarCameraController =
   typeof viewer.scene.screenSpaceCameraController & {
+    _ellipsoid?: Ellipsoid
+    _minimumCollisionTerrainHeight?: number
+    _minimumPickingTerrainDistanceWithInertia?: number
+    _minimumPickingTerrainHeight?: number
+    _minimumTrackBallHeight?: number
     _minimumZoomRate?: number
     _maximumZoomRate?: number
   }
@@ -84,9 +90,26 @@ const DEFAULT_MINIMUM_ZOOM_DISTANCE =
 
 const DEFAULT_MINIMUM_ZOOM_RATE = 20
 
+const DEFAULT_CONTROLLER_ELLIPSOID =
+  cameraController._ellipsoid
+
+const DEFAULT_MINIMUM_PICKING_TERRAIN_HEIGHT =
+  cameraController.minimumPickingTerrainHeight
+
+const DEFAULT_MINIMUM_PICKING_TERRAIN_DISTANCE_WITH_INERTIA =
+  cameraController.minimumPickingTerrainDistanceWithInertia
+
+const DEFAULT_MINIMUM_COLLISION_TERRAIN_HEIGHT =
+  cameraController.minimumCollisionTerrainHeight
+
+const DEFAULT_MINIMUM_TRACK_BALL_HEIGHT =
+  cameraController.minimumTrackBallHeight
+
 const TRACKED_BODY_ZOOM_FACTOR = 8
 
 const SURFACE_ZOOM_LIMIT_MULTIPLIER = 1.04
+
+const CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER = 6
 
 const orbitOverlayCanvas =
   document.createElement('canvas')
@@ -2827,6 +2850,13 @@ let cameraCentrePosition =
 let redirectingNativeTracking =
   false
 
+let activeControllerEllipsoid:
+  | Ellipsoid
+  | undefined
+
+let activeControllerEllipsoidRadius =
+  Number.NaN
+
 function getEntityPosition(
   entity: Entity,
   result: Cartesian3 = new Cartesian3()
@@ -3144,6 +3174,28 @@ function updateCameraConstraintAxis(
     | undefined =
       activeCameraTargetEntity
 ) {
+  const radius =
+    entity
+      ? getEntityRadius(
+          entity
+        )
+      : undefined
+
+  if (
+    entity &&
+    radius &&
+    Cartesian3.magnitude(
+      viewer.camera.position
+    ) <=
+      radius *
+        CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER
+  ) {
+    viewer.camera.constrainedAxis =
+      undefined
+
+    return
+  }
+
   const localAxis =
     Matrix4.multiplyByPointAsVector(
       viewer.camera.inverseTransform,
@@ -3160,8 +3212,123 @@ function updateCameraConstraintAxis(
     )
 }
 
+function updateCameraControllerEllipsoid(
+  radius:
+    | number
+    | undefined
+) {
+  if (!radius) {
+    if (DEFAULT_CONTROLLER_ELLIPSOID) {
+      cameraController._ellipsoid =
+        DEFAULT_CONTROLLER_ELLIPSOID
+    }
+
+    cameraController.minimumPickingTerrainHeight =
+      DEFAULT_MINIMUM_PICKING_TERRAIN_HEIGHT
+
+    cameraController._minimumPickingTerrainHeight =
+      DEFAULT_MINIMUM_PICKING_TERRAIN_HEIGHT
+
+    cameraController.minimumPickingTerrainDistanceWithInertia =
+      DEFAULT_MINIMUM_PICKING_TERRAIN_DISTANCE_WITH_INERTIA
+
+    cameraController._minimumPickingTerrainDistanceWithInertia =
+      DEFAULT_MINIMUM_PICKING_TERRAIN_DISTANCE_WITH_INERTIA
+
+    cameraController.minimumCollisionTerrainHeight =
+      DEFAULT_MINIMUM_COLLISION_TERRAIN_HEIGHT
+
+    cameraController._minimumCollisionTerrainHeight =
+      DEFAULT_MINIMUM_COLLISION_TERRAIN_HEIGHT
+
+    cameraController.minimumTrackBallHeight =
+      DEFAULT_MINIMUM_TRACK_BALL_HEIGHT
+
+    cameraController._minimumTrackBallHeight =
+      DEFAULT_MINIMUM_TRACK_BALL_HEIGHT
+
+    activeControllerEllipsoidRadius =
+      Number.NaN
+
+    activeControllerEllipsoid =
+      undefined
+
+    return
+  }
+
+  if (
+    radius !==
+    activeControllerEllipsoidRadius
+  ) {
+    activeControllerEllipsoid =
+      new Ellipsoid(
+        radius,
+        radius,
+        radius
+      )
+
+    activeControllerEllipsoidRadius =
+      radius
+  }
+
+  cameraController._ellipsoid =
+    activeControllerEllipsoid
+
+  const minimumPickingTerrainHeight =
+    Math.max(
+      radius * 0.025,
+      1
+    )
+
+  const minimumPickingTerrainDistanceWithInertia =
+    Math.max(
+      radius * 0.00063,
+      1
+    )
+
+  const minimumCollisionTerrainHeight =
+    Math.max(
+      radius * 0.0025,
+      1
+    )
+
+  const minimumTrackBallHeight =
+    Math.max(
+      radius * 1.175,
+      1
+    )
+
+  cameraController.minimumPickingTerrainHeight =
+    minimumPickingTerrainHeight
+
+  cameraController._minimumPickingTerrainHeight =
+    minimumPickingTerrainHeight
+
+  cameraController.minimumPickingTerrainDistanceWithInertia =
+    minimumPickingTerrainDistanceWithInertia
+
+  cameraController._minimumPickingTerrainDistanceWithInertia =
+    minimumPickingTerrainDistanceWithInertia
+
+  cameraController.minimumCollisionTerrainHeight =
+    minimumCollisionTerrainHeight
+
+  cameraController._minimumCollisionTerrainHeight =
+    minimumCollisionTerrainHeight
+
+  cameraController.minimumTrackBallHeight =
+    minimumTrackBallHeight
+
+  cameraController._minimumTrackBallHeight =
+    minimumTrackBallHeight
+}
+
 function updateCameraZoomRate() {
   if (!activeCameraTargetEntity) {
+    updateCameraControllerEllipsoid(
+      undefined
+    )
+
     cameraController.zoomFactor =
       DEFAULT_CAMERA_ZOOM_FACTOR
 
@@ -3185,6 +3352,10 @@ function updateCameraZoomRate() {
   if (!radius) {
     return
   }
+
+  updateCameraControllerEllipsoid(
+    radius
+  )
 
   cameraController.zoomFactor =
     TRACKED_BODY_ZOOM_FACTOR
@@ -4014,6 +4185,83 @@ function drawOrbitOverlay() {
     }
   }
 
+  const moonSystemGapsByParent =
+    new Map<
+      PlanetRenderData,
+      OrbitGap[]
+    >()
+
+  const getMoonSystemGaps =
+    (
+      parent:
+        PlanetRenderData
+    ) => {
+      const existingGaps =
+        moonSystemGapsByParent.get(
+          parent
+        )
+
+      if (existingGaps) {
+        return existingGaps
+      }
+
+      const parentGap =
+        createOrbitGap(
+          parent.currentPosition,
+          parent.planet.radius,
+          {
+            iconPixels: 32,
+            iconAlpha:
+              parent.billboardState.alpha,
+            minRadius: 2,
+            maxRadius: 46,
+            padding: 5,
+          }
+        )
+
+      const moonGaps =
+        moonRenderData
+          .filter(
+            (renderData) =>
+              renderData.parent === parent
+          )
+          .map(
+            (renderData) =>
+              createOrbitGap(
+                renderData.currentPosition,
+                renderData.moon.radius,
+                {
+                  iconPixels: 20,
+                  iconAlpha:
+                    renderData.billboardState.alpha,
+                  minRadius: 3,
+                  maxRadius: 14,
+                  padding: 4,
+                }
+              )
+          )
+
+      const gaps =
+        [
+          parentGap,
+          ...moonGaps,
+        ].filter(
+          (
+            gap
+          ): gap is OrbitGap =>
+            Boolean(
+              gap
+            )
+        )
+
+      moonSystemGapsByParent.set(
+        parent,
+        gaps
+      )
+
+      return gaps
+    }
+
   for (const renderData of moonRenderData) {
     if (
       renderData.billboardState.hiddenBySize
@@ -4021,45 +4269,9 @@ function drawOrbitOverlay() {
       continue
     }
 
-    const parentGap =
-      createOrbitGap(
-        renderData.parent.currentPosition,
-        renderData.parent.planet.radius,
-        {
-          iconPixels: 32,
-          iconAlpha:
-            renderData.parent.billboardState.alpha,
-          minRadius: 2,
-          maxRadius: 46,
-          padding: 5,
-        }
-      )
-
-    const moonGap =
-      createOrbitGap(
-        renderData.currentPosition,
-        renderData.moon.radius,
-        {
-          iconPixels: 20,
-          iconAlpha:
-            renderData.billboardState.alpha,
-          minRadius: 3,
-          maxRadius: 14,
-          padding: 3,
-        }
-      )
-
     const gaps =
-      [
-        parentGap,
-        moonGap,
-      ].filter(
-        (
-          gap
-        ): gap is OrbitGap =>
-          Boolean(
-            gap
-          )
+      getMoonSystemGaps(
+        renderData.parent
       )
 
     drawOrbitPath(
