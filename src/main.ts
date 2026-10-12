@@ -2912,11 +2912,17 @@ function createOrbitGap(
       ),
 
     radius:
-      Math.min(
-        options.maxRadius,
-        visibleRadius +
-        options.padding
-      ),
+      (
+        bodyPixels >
+        iconRadius
+      )
+        ? bodyPixels +
+          options.padding
+        : Math.min(
+          options.maxRadius,
+          visibleRadius +
+          options.padding
+        ),
   }
 }
 
