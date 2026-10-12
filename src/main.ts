@@ -1303,8 +1303,10 @@ type PlanetRenderData = {
   positionProperty: ConstantPositionProperty
   billboardColor: ConstantProperty
   billboardState: BillboardState
+  physicalPosition: Cartesian3
   currentPosition: Cartesian3
   orbitNormal: Cartesian3
+  physicalOrbitPositions: Cartesian3[]
   orbitPositions: ConstantProperty
 }
 
@@ -1315,6 +1317,7 @@ type MoonRenderData = {
   positionProperty: ConstantPositionProperty
   billboardColor: ConstantProperty
   billboardState: BillboardState
+  physicalPosition: Cartesian3
   currentPosition: Cartesian3
   orbitNormal: Cartesian3
   orbitPositions: ConstantProperty
@@ -2194,6 +2197,43 @@ function createMoonOrbitPositions(
   return positions
 }
 
+let renderOrigin =
+  Cartesian3.clone(
+    sun_pos
+  )
+
+function setRenderOrigin(
+  physicalPosition: Cartesian3
+) {
+  Cartesian3.clone(
+    physicalPosition,
+    renderOrigin
+  )
+}
+
+function toRenderPosition(
+  physicalPosition: Cartesian3,
+  result: Cartesian3 = new Cartesian3()
+) {
+  return Cartesian3.subtract(
+    physicalPosition,
+    renderOrigin,
+    result
+  )
+}
+
+function toRenderPositions(
+  physicalPositions: Cartesian3[]
+) {
+  return physicalPositions.map(
+    (position) =>
+      toRenderPosition(
+        position,
+        new Cartesian3()
+      )
+  )
+}
+
 
 // --------------------------------------------------
 // BILLBOARD ICON
@@ -2234,6 +2274,18 @@ const sunBillboardColor =
     Color.WHITE
   )
 
+const sunPositionProperty =
+  new ConstantPositionProperty(
+    toRenderPosition(
+      sun_pos
+    )
+  )
+
+let sunRenderPosition =
+  toRenderPosition(
+    sun_pos
+  )
+
 const sunBillboardState: BillboardState = {
   alpha: 1,
   visible: true,
@@ -2250,7 +2302,8 @@ const bodyBillboardStates =
 const sunEntity = viewer.entities.add({
   name: 'Sun',
 
-  position: sun_pos,
+  position:
+    sunPositionProperty,
 
   ellipsoid: {
     radii:
@@ -2306,10 +2359,15 @@ bodyBillboardStates.set(
 const planetRenderData: PlanetRenderData[] = []
 
 for (const planet of planets) {
-  const initialPosition =
+  const initialPhysicalPosition =
     getPlanetPosition(
       planet,
       viewer.clock.currentTime
+    )
+
+  const initialPosition =
+    toRenderPosition(
+      initialPhysicalPosition
     )
 
   const positionProperty =
@@ -2329,11 +2387,16 @@ for (const planet of planets) {
     pixelDiameter: 0,
   }
 
+  const physicalOrbitPositions =
+    createOrbitPositions(
+      planet,
+      viewer.clock.currentTime
+    )
+
   const orbitPositions =
     new ConstantProperty(
-      createOrbitPositions(
-        planet,
-        viewer.clock.currentTime
+      toRenderPositions(
+        physicalOrbitPositions
       )
     )
 
@@ -2431,12 +2494,15 @@ for (const planet of planets) {
     positionProperty,
     billboardColor,
     billboardState,
+    physicalPosition:
+      initialPhysicalPosition,
     currentPosition: initialPosition,
     orbitNormal:
       getPlanetOrbitNormal(
         planet,
         viewer.clock.currentTime
       ),
+    physicalOrbitPositions,
     orbitPositions,
   })
 }
@@ -2456,11 +2522,16 @@ for (const moon of majorMoons) {
     continue
   }
 
-  const initialPosition =
+  const initialPhysicalPosition =
     getMoonPosition(
       moon,
-      parent.currentPosition,
+      parent.physicalPosition,
       viewer.clock.currentTime
+    )
+
+  const initialPosition =
+    toRenderPosition(
+      initialPhysicalPosition
     )
 
   const positionProperty =
@@ -2482,9 +2553,11 @@ for (const moon of majorMoons) {
 
   const orbitPositions =
     new ConstantProperty(
-      createMoonOrbitPositions(
-        moon,
-        parent.currentPosition
+      toRenderPositions(
+        createMoonOrbitPositions(
+          moon,
+          parent.physicalPosition
+        )
       )
     )
 
@@ -2583,6 +2656,8 @@ for (const moon of majorMoons) {
     positionProperty,
     billboardColor,
     billboardState,
+    physicalPosition:
+      initialPhysicalPosition,
     currentPosition: initialPosition,
     orbitNormal:
       getMoonOrbitNormal(
@@ -2644,14 +2719,132 @@ function getEntityPosition(
   entity: Entity,
   result: Cartesian3 = new Cartesian3()
 ) {
-  return entity
-    .position
-    ?.getValue(
-      viewer.clock.currentTime,
-      result
-    ) as
-      | Cartesian3
-      | undefined
+  const physicalPosition =
+    getEntityPhysicalPosition(
+      entity
+    )
+
+  if (!physicalPosition) {
+    return undefined
+  }
+
+  return toRenderPosition(
+    physicalPosition,
+    result
+  )
+}
+
+function getEntityPhysicalPosition(
+  entity: Entity
+) {
+  if (entity === sunEntity) {
+    return sun_pos
+  }
+
+  const planet =
+    planetRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (planet) {
+    return planet.physicalPosition
+  }
+
+  const moon =
+    moonRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (moon) {
+    return moon.physicalPosition
+  }
+
+  return undefined
+}
+
+function updateRenderOriginForCameraTarget() {
+  if (!activeCameraTargetEntity) {
+    setRenderOrigin(
+      sun_pos
+    )
+
+    return
+  }
+
+  const physicalPosition =
+    getEntityPhysicalPosition(
+      activeCameraTargetEntity
+    )
+
+  if (physicalPosition) {
+    setRenderOrigin(
+      physicalPosition
+    )
+  }
+}
+
+function updateRenderedBodyPositions(
+  currentTime: JulianDate,
+  updatePlanetOrbitShapes: boolean
+) {
+  sunRenderPosition =
+    toRenderPosition(
+      sun_pos,
+      sunRenderPosition
+    )
+
+  sunPositionProperty.setValue(
+    sunRenderPosition
+  )
+
+  for (const renderData of planetRenderData) {
+    renderData.currentPosition =
+      toRenderPosition(
+        renderData.physicalPosition,
+        renderData.currentPosition
+      )
+
+    renderData.positionProperty.setValue(
+      renderData.currentPosition
+    )
+
+    if (updatePlanetOrbitShapes) {
+      renderData.physicalOrbitPositions =
+        createOrbitPositions(
+          renderData.planet,
+          currentTime
+        )
+    }
+
+    renderData.orbitPositions.setValue(
+      toRenderPositions(
+        renderData.physicalOrbitPositions
+      )
+    )
+  }
+
+  for (const renderData of moonRenderData) {
+    renderData.currentPosition =
+      toRenderPosition(
+        renderData.physicalPosition,
+        renderData.currentPosition
+      )
+
+    renderData.positionProperty.setValue(
+      renderData.currentPosition
+    )
+
+    renderData.orbitPositions.setValue(
+      toRenderPositions(
+        createMoonOrbitPositions(
+          renderData.moon,
+          renderData.parent.physicalPosition
+        )
+      )
+    )
+  }
 }
 
 function getCameraConstraintAxisWorld(
@@ -2693,6 +2886,44 @@ function getCameraConstraintAxisWorld(
   }
 
   return Cartesian3.UNIT_Z
+}
+
+function getConstraintAlignedUp(
+  directionWC: Cartesian3,
+  constraintAxisWC: Cartesian3,
+  fallbackUpWC: Cartesian3
+) {
+  const directionComponent =
+    Cartesian3.multiplyByScalar(
+      directionWC,
+      Cartesian3.dot(
+        constraintAxisWC,
+        directionWC
+      ),
+      new Cartesian3()
+    )
+
+  const upWC =
+    Cartesian3.subtract(
+      constraintAxisWC,
+      directionComponent,
+      new Cartesian3()
+    )
+
+  if (
+    Cartesian3.magnitude(
+      upWC
+    ) < 1e-7
+  ) {
+    return Cartesian3.clone(
+      fallbackUpWC
+    )
+  }
+
+  return Cartesian3.normalize(
+    upWC,
+    upWC
+  )
 }
 
 function updateCameraConstraintAxis(
@@ -2921,12 +3152,12 @@ function clearNativeTrackedEntity() {
 function trackBody(
   entity: Entity
 ) {
-  const position =
-    getEntityPosition(
+  const physicalPosition =
+    getEntityPhysicalPosition(
       entity
     )
 
-  if (!position) {
+  if (!physicalPosition) {
     return
   }
 
@@ -2949,10 +3180,38 @@ function trackBody(
       viewer.camera.directionWC
     )
 
+  const constraintAxisWC =
+    getCameraConstraintAxisWorld(
+      entity
+    )
+
   const upWC =
-    Cartesian3.clone(
+    getConstraintAlignedUp(
+      directionWC,
+      constraintAxisWC,
       viewer.camera.upWC
     )
+
+  activeCameraTargetEntity =
+    entity
+
+  setRenderOrigin(
+    physicalPosition
+  )
+
+  updateRenderedBodyPositions(
+    viewer.clock.currentTime,
+    false
+  )
+
+  const position =
+    getEntityPosition(
+      entity
+    )
+
+  if (!position) {
+    return
+  }
 
   const destination =
     Cartesian3.subtract(
@@ -2964,9 +3223,6 @@ function trackBody(
       ),
       new Cartesian3()
     )
-
-  activeCameraTargetEntity =
-    entity
 
   cameraCentrePosition =
     Cartesian3.clone(
@@ -3438,7 +3694,7 @@ function drawOrbitOverlay() {
 
   const sunGap =
     createOrbitGap(
-    sun_pos,
+    sunRenderPosition,
     sun_rad,
     {
       iconPixels: 32,
@@ -3687,9 +3943,11 @@ function updateMoonBillboardFade(
   billboardColor: ConstantProperty,
   state: BillboardState,
   parentBillboardState: BillboardState,
+  parentIconSuppressed: boolean,
   deltaSeconds: number
 ) {
   if (
+    !parentIconSuppressed &&
     parentBillboardState.visible &&
     parentBillboardState.alpha > 0.05
   ) {
@@ -3829,12 +4087,68 @@ viewer.scene.preRender.addEventListener(() => {
     )
 
 
+  let updatePlanetOrbitShapes =
+    false
+
+  if (
+    !Number.isFinite(
+      lastOrbitUpdateJulianDay
+    ) ||
+    Math.abs(
+      currentJulianDay -
+        lastOrbitUpdateJulianDay
+    ) >= 30
+  ) {
+    lastOrbitUpdateJulianDay =
+      currentJulianDay
+
+    updatePlanetOrbitShapes =
+      true
+  }
+
+
+  // --------------------------------------------------
+  // PHYSICAL POSITIONS
+  // --------------------------------------------------
+
+  for (const renderData of planetRenderData) {
+    renderData.physicalPosition =
+      getPlanetPosition(
+        renderData.planet,
+        currentTime
+      )
+  }
+
+  for (const renderData of moonRenderData) {
+    renderData.physicalPosition =
+      getMoonPosition(
+        renderData.moon,
+        renderData.parent.physicalPosition,
+        currentTime
+      )
+  }
+
+  updateRenderOriginForCameraTarget()
+
+  updateRenderedBodyPositions(
+    currentTime,
+    updatePlanetOrbitShapes
+  )
+
+
+  // --------------------------------------------------
+  // CAMERA CENTRE
+  // --------------------------------------------------
+
+  updateCameraCentre()
+
+
   // --------------------------------------------------
   // SUN
   // --------------------------------------------------
 
   updateBillboardFade(
-    sun_pos,
+    sunRenderPosition,
     sun_rad,
     sunBillboardColor,
     sunBillboardState,
@@ -3847,21 +4161,8 @@ viewer.scene.preRender.addEventListener(() => {
   // --------------------------------------------------
 
   for (const renderData of planetRenderData) {
-    const position =
-      getPlanetPosition(
-        renderData.planet,
-        currentTime
-      )
-
-    renderData.positionProperty.setValue(
-      position
-    )
-
-    renderData.currentPosition =
-      position
-
     updateBillboardFade(
-      position,
+      renderData.currentPosition,
       renderData.planet.radius,
       renderData.billboardColor,
       renderData.billboardState,
@@ -3869,49 +4170,25 @@ viewer.scene.preRender.addEventListener(() => {
     )
   }
 
+  const parentIconsSuppressed =
+    isTrackedBodyLocalView()
+
 
   // --------------------------------------------------
   // MOONS
   // --------------------------------------------------
 
   for (const renderData of moonRenderData) {
-    const position =
-      getMoonPosition(
-        renderData.moon,
-        renderData.parent.currentPosition,
-        currentTime
-      )
-
-    renderData.positionProperty.setValue(
-      position
-    )
-
-    renderData.currentPosition =
-      position
-
-    renderData.orbitPositions.setValue(
-      createMoonOrbitPositions(
-        renderData.moon,
-        renderData.parent.currentPosition
-      )
-    )
-
     updateMoonBillboardFade(
-      position,
+      renderData.currentPosition,
       renderData.moon.radius,
       renderData.billboardColor,
       renderData.billboardState,
       renderData.parent.billboardState,
+      parentIconsSuppressed,
       deltaSeconds
     )
   }
-
-
-  // --------------------------------------------------
-  // CAMERA CENTRE
-  // --------------------------------------------------
-
-  updateCameraCentre()
 
 
   // --------------------------------------------------
@@ -3921,33 +4198,6 @@ viewer.scene.preRender.addEventListener(() => {
   hideAllBillboardsForLocalBodyView(
     deltaSeconds
   )
-
-
-  // --------------------------------------------------
-  // UPDATE ORBIT SHAPES
-  // --------------------------------------------------
-
-  if (
-    !Number.isFinite(
-      lastOrbitUpdateJulianDay
-    ) ||
-    Math.abs(
-      currentJulianDay -
-      lastOrbitUpdateJulianDay
-    ) >= 30
-  ) {
-    lastOrbitUpdateJulianDay =
-      currentJulianDay
-
-    for (const renderData of planetRenderData) {
-      renderData.orbitPositions.setValue(
-        createOrbitPositions(
-          renderData.planet,
-          currentTime
-        )
-      )
-    }
-  }
 })
 
 viewer.scene.postRender.addEventListener(
