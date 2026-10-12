@@ -15,8 +15,6 @@ import {
   Matrix4,
   SceneTransforms,
   ScreenSpaceEventType,
-  TrackingReferenceFrame,
-  Transforms,
   Viewer,
 } from 'cesium'
 
@@ -32,6 +30,7 @@ const viewer = new Viewer('cesiumContainer')
 
 // Allow Solar-System-scale viewing distances.
 viewer.camera.frustum.far = 100_000_000_000_000
+viewer.camera.constrainedAxis = undefined
 
 type SolarCameraController =
   typeof viewer.scene.screenSpaceCameraController & {
@@ -2313,9 +2312,6 @@ for (const planet of planets) {
     position:
       positionProperty,
 
-    trackingReferenceFrame:
-      TrackingReferenceFrame.ENU,
-
     ellipsoid: {
       radii:
         new Cartesian3(
@@ -2464,9 +2460,6 @@ for (const moon of majorMoons) {
     position:
       positionProperty,
 
-    trackingReferenceFrame:
-      TrackingReferenceFrame.ENU,
-
     ellipsoid: {
       radii:
         new Cartesian3(
@@ -2560,51 +2553,39 @@ function selectBody(
   entity: Entity
 ) {
   viewer.selectedEntity =
-    viewer.trackedEntity === entity
-      ? undefined
-      : entity
+    entity
 }
 
-type TrackingCameraState = {
-  positionWC: Cartesian3
-  directionWC: Cartesian3
-  upWC: Cartesian3
-}
-
-let cancelPendingTrackingCameraRestore:
-  | (() => void)
+let activeCameraTargetEntity:
+  | Entity
   | undefined
 
-function restoreCameraStateInCurrentFrame(
-  state: TrackingCameraState
+let cameraCentrePosition =
+  Cartesian3.clone(
+    sun_pos
+  )
+
+let redirectingNativeTracking =
+  false
+
+function getEntityPosition(
+  entity: Entity,
+  result: Cartesian3 = new Cartesian3()
 ) {
-  const inverseTransform =
-    Matrix4.inverseTransformation(
-      viewer.camera.transform,
-      new Matrix4()
-    )
+  return entity
+    .position
+    ?.getValue(
+      viewer.clock.currentTime,
+      result
+    ) as
+      | Cartesian3
+      | undefined
+}
 
-  Matrix4.multiplyByPoint(
-    inverseTransform,
-    state.positionWC,
-    viewer.camera.position
-  )
-
-  Matrix4.multiplyByPointAsVector(
-    inverseTransform,
-    state.directionWC,
-    viewer.camera.direction
-  )
-
+function normaliseCameraAxes() {
   Cartesian3.normalize(
     viewer.camera.direction,
     viewer.camera.direction
-  )
-
-  Matrix4.multiplyByPointAsVector(
-    inverseTransform,
-    state.upWC,
-    viewer.camera.up
   )
 
   const directionComponent =
@@ -2662,71 +2643,16 @@ function restoreCameraStateInCurrentFrame(
   )
 }
 
-function scheduleCameraRestoreAfterTrackingSwitch(
-  entity: Entity,
-  state: TrackingCameraState
+function setCameraWorldStateForCentre(
+  centre: Cartesian3,
+  positionWC: Cartesian3,
+  directionWC: Cartesian3,
+  upWC: Cartesian3
 ) {
-  cancelPendingTrackingCameraRestore?.()
-
-  let framesRemaining = 2
-  let removeListener:
-    | (() => void)
-    | undefined
-
-  const onPostRender = () => {
-    if (viewer.trackedEntity !== entity) {
-      removeListener?.()
-      cancelPendingTrackingCameraRestore =
-        undefined
-
-      return
-    }
-
-    restoreCameraStateInCurrentFrame(
-      state
-    )
-
-    framesRemaining -= 1
-
-    if (framesRemaining <= 0) {
-      removeListener?.()
-      cancelPendingTrackingCameraRestore =
-        undefined
-    }
-  }
-
-  removeListener =
-    viewer.scene.postRender.addEventListener(
-      onPostRender
-    )
-
-  cancelPendingTrackingCameraRestore = () => {
-    removeListener?.()
-    cancelPendingTrackingCameraRestore =
-      undefined
-  }
-}
-
-function captureTrackingCameraState(
-  entity: Entity
-): TrackingCameraState | undefined {
-  const position =
-    entity
-      .position
-      ?.getValue(
-        viewer.clock.currentTime,
-        new Cartesian3()
-      ) as
-        | Cartesian3
-        | undefined
-
-  if (!position) {
-    return undefined
-  }
-
   const transform =
-    Transforms.eastNorthUpToFixedFrame(
-      position
+    Matrix4.fromTranslation(
+      centre,
+      new Matrix4()
     )
 
   const inverseTransform =
@@ -2735,10 +2661,150 @@ function captureTrackingCameraState(
       new Matrix4()
     )
 
-  const range =
+  viewer.camera.lookAtTransform(
+    transform
+  )
+
+  Matrix4.multiplyByPoint(
+    inverseTransform,
+    positionWC,
+    viewer.camera.position
+  )
+
+  Matrix4.multiplyByPointAsVector(
+    inverseTransform,
+    directionWC,
+    viewer.camera.direction
+  )
+
+  Matrix4.multiplyByPointAsVector(
+    inverseTransform,
+    upWC,
+    viewer.camera.up
+  )
+
+  normaliseCameraAxes()
+}
+
+function setCameraCentrePreservingLocalState(
+  centre: Cartesian3
+) {
+  const localPosition =
+    Cartesian3.clone(
+      viewer.camera.position
+    )
+
+  const localDirection =
+    Cartesian3.clone(
+      viewer.camera.direction
+    )
+
+  const localUp =
+    Cartesian3.clone(
+      viewer.camera.up
+    )
+
+  const transform =
+    Matrix4.fromTranslation(
+      centre,
+      new Matrix4()
+    )
+
+  viewer.camera.lookAtTransform(
+    transform
+  )
+
+  Cartesian3.clone(
+    localPosition,
+    viewer.camera.position
+  )
+
+  Cartesian3.clone(
+    localDirection,
+    viewer.camera.direction
+  )
+
+  Cartesian3.clone(
+    localUp,
+    viewer.camera.up
+  )
+
+  normaliseCameraAxes()
+}
+
+function updateCameraCentre() {
+  if (!activeCameraTargetEntity) {
+    return
+  }
+
+  const position =
+    getEntityPosition(
+      activeCameraTargetEntity
+    )
+
+  if (!position) {
+    return
+  }
+
+  if (
     Cartesian3.distance(
-      viewer.camera.positionWC,
-      position
+      position,
+      cameraCentrePosition
+    ) < 1
+  ) {
+    return
+  }
+
+  setCameraCentrePreservingLocalState(
+    position
+  )
+
+  cameraCentrePosition =
+    Cartesian3.clone(
+      position,
+      cameraCentrePosition
+    )
+}
+
+function clearNativeTrackedEntity() {
+  if (!viewer.trackedEntity) {
+    return
+  }
+
+  redirectingNativeTracking =
+    true
+
+  viewer.trackedEntity =
+    undefined
+
+  redirectingNativeTracking =
+    false
+}
+
+function trackBody(
+  entity: Entity
+) {
+  const position =
+    getEntityPosition(
+      entity
+    )
+
+  if (!position) {
+    return
+  }
+
+  clearNativeTrackedEntity()
+
+  viewer.selectedEntity =
+    undefined
+
+  const range =
+    Math.max(
+      Cartesian3.distance(
+        viewer.camera.positionWC,
+        cameraCentrePosition
+      ),
+      1
     )
 
   const directionWC =
@@ -2762,43 +2828,21 @@ function captureTrackingCameraState(
       new Cartesian3()
     )
 
-  entity.viewFrom =
-    Matrix4.multiplyByPoint(
-      inverseTransform,
-      destination,
-      new Cartesian3()
-    )
-
-  return {
-    positionWC:
-      destination,
-
-    directionWC,
-
-    upWC,
-  }
-}
-
-function trackBody(
-  entity: Entity
-) {
-  viewer.selectedEntity =
-    undefined
-
-  const cameraState =
-    captureTrackingCameraState(
-      entity
-    )
-
-  viewer.trackedEntity =
+  activeCameraTargetEntity =
     entity
 
-  if (cameraState) {
-    scheduleCameraRestoreAfterTrackingSwitch(
-      entity,
-      cameraState
+  cameraCentrePosition =
+    Cartesian3.clone(
+      position,
+      cameraCentrePosition
     )
-  }
+
+  setCameraWorldStateForCentre(
+    cameraCentrePosition,
+    destination,
+    directionWC,
+    upWC
+  )
 }
 
 viewer
@@ -2810,16 +2854,27 @@ viewer
         | undefined
     ) => {
       if (
-        entity &&
-        trackableBodies.has(
+        redirectingNativeTracking ||
+        !entity ||
+        !trackableBodies.has(
           entity
         )
       ) {
-        viewer.selectedEntity =
-          undefined
-
         return
       }
+
+      redirectingNativeTracking =
+        true
+
+      viewer.trackedEntity =
+        undefined
+
+      redirectingNativeTracking =
+        false
+
+      trackBody(
+        entity
+      )
     }
   )
 
@@ -3493,7 +3548,10 @@ function updateMoonBillboardFade(
   parentBillboardState: BillboardState,
   deltaSeconds: number
 ) {
-  if (parentBillboardState.alpha > 0.05) {
+  if (
+    parentBillboardState.visible &&
+    parentBillboardState.alpha > 0.05
+  ) {
     state.visible = false
     state.hiddenBySize = false
     state.pixelDiameter = 0
@@ -3515,8 +3573,8 @@ function updateMoonBillboardFade(
     billboardColor,
     state,
     deltaSeconds,
-    8,
-    7,
+    16,
+    15.5,
     0.25
   )
 }
@@ -3537,7 +3595,7 @@ function isLocalBodyView() {
 
 function isTrackedBodyLocalView() {
   const trackedEntity =
-    viewer.trackedEntity
+    activeCameraTargetEntity
 
   if (!trackedEntity) {
     return false
@@ -3706,6 +3764,13 @@ viewer.scene.preRender.addEventListener(() => {
       deltaSeconds
     )
   }
+
+
+  // --------------------------------------------------
+  // CAMERA CENTRE
+  // --------------------------------------------------
+
+  updateCameraCentre()
 
 
   // --------------------------------------------------
