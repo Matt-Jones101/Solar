@@ -12,6 +12,7 @@ import {
   HeadingPitchRange,
   JulianDate,
   Matrix3,
+  SceneTransforms,
   ScreenSpaceEventType,
   Viewer,
 } from 'cesium'
@@ -63,6 +64,41 @@ cameraController.enableCollisionDetection = false
 // but it feels artificially slow when viewing the whole
 // Solar System from far outside Neptune and Pluto.
 cameraController._maximumZoomRate = 100_000_000_000_000
+
+const orbitOverlayCanvas =
+  document.createElement('canvas')
+
+const orbitOverlayParent =
+  (
+    viewer.scene.canvas.parentElement ??
+    viewer.container
+  ) as HTMLElement
+
+if (
+  getComputedStyle(
+    orbitOverlayParent
+  ).position === 'static'
+) {
+  orbitOverlayParent.style.position =
+    'relative'
+}
+
+orbitOverlayCanvas.style.position =
+  'absolute'
+orbitOverlayCanvas.style.inset =
+  '0'
+orbitOverlayCanvas.style.width =
+  '100%'
+orbitOverlayCanvas.style.height =
+  '100%'
+orbitOverlayCanvas.style.pointerEvents =
+  'none'
+orbitOverlayCanvas.style.zIndex =
+  '1'
+
+orbitOverlayParent.appendChild(
+  orbitOverlayCanvas
+)
 
 
 // --------------------------------------------------
@@ -1235,6 +1271,11 @@ type BillboardState = {
   visible: boolean
 }
 
+type OrbitGap = {
+  centre: Cartesian2
+  radius: number
+}
+
 type PlanetRenderData = {
   planet: PlanetData
   positionProperty: ConstantPositionProperty
@@ -2209,6 +2250,9 @@ for (const planet of planets) {
       `${planet.name} Orbit`,
 
     polyline: {
+      show:
+        false,
+
       positions:
         orbitPositions,
 
@@ -2343,6 +2387,9 @@ for (const moon of majorMoons) {
       `${moon.name} Orbit`,
 
     polyline: {
+      show:
+        false,
+
       positions:
         orbitPositions,
 
@@ -2466,44 +2513,112 @@ function getTrackingRange(
   )
 }
 
+let customTrackedBody:
+  Entity |
+  undefined
+
+let customTrackedBodyPosition:
+  Cartesian3 |
+  undefined
+
+let syncingTrackedEntity =
+  false
+
+function getBodyPosition(
+  entity: Entity
+) {
+  return entity
+    .position
+    ?.getValue(
+      viewer.clock.currentTime,
+      new Cartesian3()
+    ) as
+      | Cartesian3
+      | undefined
+}
+
+function focusBodyCamera(
+  entity: Entity
+) {
+  const position =
+    getBodyPosition(
+      entity
+    )
+
+  if (!position) {
+    return
+  }
+
+  customTrackedBody =
+    entity
+
+  customTrackedBodyPosition =
+    Cartesian3.clone(
+      position
+    )
+
+  viewer.camera.lookAt(
+    position,
+    new HeadingPitchRange(
+      0,
+      -0.35,
+      getTrackingRange(
+        entity
+      )
+    )
+  )
+}
+
 function trackBody(
   entity: Entity
 ) {
-  viewer.trackedEntity =
-    undefined
-
   viewer.selectedEntity =
     entity
 
-  void viewer
-    .flyTo(
-      entity,
-      {
-        duration: 0.45,
+  syncingTrackedEntity =
+    true
 
-        offset:
-          new HeadingPitchRange(
-            0,
-            -0.35,
-            getTrackingRange(
-              entity
-            )
-          ),
-      }
-    )
-    .then(
-      () => {
-        viewer.trackedEntity =
-          entity
-      }
-    )
-    .catch(
-      () => {
-        viewer.trackedEntity =
-          entity
-      }
-    )
+  viewer.trackedEntity =
+    entity
+
+  syncingTrackedEntity =
+    false
+
+  focusBodyCamera(
+    entity
+  )
 }
+
+viewer
+  .trackedEntityChanged
+  .addEventListener(
+    (
+      entity:
+        | Entity
+        | undefined
+    ) => {
+      if (syncingTrackedEntity) {
+        return
+      }
+
+      if (
+        entity &&
+        trackableBodies.has(
+          entity
+        )
+      ) {
+        focusBodyCamera(
+          entity
+        )
+        return
+      }
+
+      customTrackedBody =
+        undefined
+      customTrackedBodyPosition =
+        undefined
+    }
+  )
 
 viewer
   .cesiumWidget
@@ -2565,6 +2680,404 @@ viewer.scene.canvas.addEventListener(
   },
   true
 )
+
+function updateCustomTrackedBodyCamera() {
+  if (
+    !customTrackedBody ||
+    !customTrackedBodyPosition
+  ) {
+    return
+  }
+
+  const position =
+    getBodyPosition(
+      customTrackedBody
+    )
+
+  if (!position) {
+    return
+  }
+
+  const delta =
+    Cartesian3.subtract(
+      position,
+      customTrackedBodyPosition,
+      new Cartesian3()
+    )
+
+  viewer.camera.position =
+    Cartesian3.add(
+      viewer.camera.position,
+      delta,
+      new Cartesian3()
+    )
+
+  customTrackedBodyPosition =
+    Cartesian3.clone(
+      position
+    )
+}
+
+
+// --------------------------------------------------
+// ORBIT OVERLAY
+// --------------------------------------------------
+
+function prepareOrbitOverlay() {
+  const width =
+    orbitOverlayCanvas.clientWidth
+
+  const height =
+    orbitOverlayCanvas.clientHeight
+
+  const dpr =
+    window.devicePixelRatio ||
+    1
+
+  const bufferWidth =
+    Math.max(
+      1,
+      Math.floor(
+        width * dpr
+      )
+    )
+
+  const bufferHeight =
+    Math.max(
+      1,
+      Math.floor(
+        height * dpr
+      )
+    )
+
+  if (
+    orbitOverlayCanvas.width !== bufferWidth ||
+    orbitOverlayCanvas.height !== bufferHeight
+  ) {
+    orbitOverlayCanvas.width =
+      bufferWidth
+
+    orbitOverlayCanvas.height =
+      bufferHeight
+  }
+
+  const context =
+    orbitOverlayCanvas.getContext(
+      '2d'
+    )
+
+  if (!context) {
+    return undefined
+  }
+
+  context.setTransform(
+    dpr,
+    0,
+    0,
+    dpr,
+    0,
+    0
+  )
+
+  context.clearRect(
+    0,
+    0,
+    width,
+    height
+  )
+
+  return {
+    context,
+    width,
+    height,
+  }
+}
+
+function getScreenPosition(
+  position: Cartesian3
+) {
+  const cameraToPosition =
+    Cartesian3.subtract(
+      position,
+      viewer.camera.positionWC,
+      new Cartesian3()
+    )
+
+  if (
+    Cartesian3.dot(
+      cameraToPosition,
+      viewer.camera.directionWC
+    ) <= 0
+  ) {
+    return undefined
+  }
+
+  return SceneTransforms
+    .worldToWindowCoordinates(
+      viewer.scene,
+      position
+    )
+}
+
+function addOrbitGap(
+  gaps: OrbitGap[],
+  position: Cartesian3,
+  radius: number,
+  iconPixels: number,
+  iconAlpha: number
+) {
+  const centre =
+    getScreenPosition(
+      position
+    )
+
+  if (!centre) {
+    return
+  }
+
+  const edgePosition =
+    Cartesian3.add(
+      position,
+      Cartesian3.multiplyByScalar(
+        viewer.camera.rightWC,
+        radius,
+        new Cartesian3()
+      ),
+      new Cartesian3()
+    )
+
+  const edge =
+    getScreenPosition(
+      edgePosition
+    )
+
+  const bodyPixels =
+    edge
+      ? Cartesian2.distance(
+        centre,
+        edge
+      )
+      : 0
+
+  const iconRadius =
+    iconAlpha > 0.05
+      ? iconPixels / 2
+      : 0
+
+  gaps.push({
+    centre:
+      Cartesian2.clone(
+        centre
+      ),
+
+    radius:
+      Math.max(
+        bodyPixels,
+        iconRadius
+      ) +
+      8,
+  })
+}
+
+function pointIsInOrbitGap(
+  point: Cartesian2,
+  gaps: OrbitGap[]
+) {
+  return gaps.some(
+    (gap) =>
+      Cartesian2.distance(
+        point,
+        gap.centre
+      ) <= gap.radius
+  )
+}
+
+function drawOrbitPath(
+  context: CanvasRenderingContext2D,
+  positions: Cartesian3[] | undefined,
+  colour: string,
+  alpha: number,
+  width: number,
+  gaps: OrbitGap[],
+  canvasWidth: number,
+  canvasHeight: number
+) {
+  if (
+    !positions ||
+    positions.length < 2
+  ) {
+    return
+  }
+
+  const maxSegmentLength =
+    Math.max(
+      canvasWidth,
+      canvasHeight
+    ) *
+    0.7
+
+  context.strokeStyle =
+    colour
+  context.globalAlpha =
+    alpha
+  context.lineWidth =
+    width
+  context.lineCap =
+    'round'
+  context.lineJoin =
+    'round'
+
+  let drawing =
+    false
+
+  let previousPoint:
+    Cartesian2 |
+    undefined
+
+  for (const position of positions) {
+    const point =
+      getScreenPosition(
+        position
+      )
+
+    const hidden =
+      !point ||
+      pointIsInOrbitGap(
+        point,
+        gaps
+      )
+
+    if (hidden) {
+      if (drawing) {
+        context.stroke()
+      }
+
+      drawing =
+        false
+      previousPoint =
+        undefined
+      continue
+    }
+
+    if (
+      previousPoint &&
+      Cartesian2.distance(
+        point,
+        previousPoint
+      ) > maxSegmentLength
+    ) {
+      if (drawing) {
+        context.stroke()
+      }
+
+      drawing =
+        false
+    }
+
+    if (!drawing) {
+      context.beginPath()
+      context.moveTo(
+        point.x,
+        point.y
+      )
+      drawing =
+        true
+    } else {
+      context.lineTo(
+        point.x,
+        point.y
+      )
+    }
+
+    previousPoint =
+      Cartesian2.clone(
+        point
+      )
+  }
+
+  if (drawing) {
+    context.stroke()
+  }
+
+  context.globalAlpha =
+    1
+}
+
+function drawOrbitOverlay() {
+  const overlay =
+    prepareOrbitOverlay()
+
+  if (!overlay) {
+    return
+  }
+
+  const gaps: OrbitGap[] = []
+
+  addOrbitGap(
+    gaps,
+    sun_pos,
+    sun_rad,
+    32,
+    sunBillboardState.alpha
+  )
+
+  for (const renderData of planetRenderData) {
+    addOrbitGap(
+      gaps,
+      renderData.currentPosition,
+      renderData.planet.radius,
+      32,
+      renderData.billboardState.alpha
+    )
+  }
+
+  for (const renderData of moonRenderData) {
+    const position =
+      getMoonPosition(
+        renderData.moon,
+        renderData.parent.currentPosition,
+        viewer.clock.currentTime
+      )
+
+    addOrbitGap(
+      gaps,
+      position,
+      renderData.moon.radius,
+      20,
+      renderData.billboardState.alpha
+    )
+  }
+
+  for (const renderData of planetRenderData) {
+    drawOrbitPath(
+      overlay.context,
+      renderData.orbitPositions.getValue(
+        viewer.clock.currentTime
+      ) as Cartesian3[] | undefined,
+      renderData.planet.colour,
+      0.85,
+      1.5,
+      gaps,
+      overlay.width,
+      overlay.height
+    )
+  }
+
+  for (const renderData of moonRenderData) {
+    drawOrbitPath(
+      overlay.context,
+      renderData.orbitPositions.getValue(
+        viewer.clock.currentTime
+      ) as Cartesian3[] | undefined,
+      renderData.moon.colour,
+      0.7,
+      1,
+      gaps,
+      overlay.width,
+      overlay.height
+    )
+  }
+}
 
 
 // --------------------------------------------------
@@ -2833,6 +3346,13 @@ viewer.scene.preRender.addEventListener(() => {
 
 
   // --------------------------------------------------
+  // BODY TRACKING
+  // --------------------------------------------------
+
+  updateCustomTrackedBodyCamera()
+
+
+  // --------------------------------------------------
   // UPDATE ORBIT SHAPES
   // --------------------------------------------------
 
@@ -2858,6 +3378,10 @@ viewer.scene.preRender.addEventListener(() => {
     }
   }
 })
+
+viewer.scene.postRender.addEventListener(
+  drawOrbitOverlay
+)
 
 
 // --------------------------------------------------
