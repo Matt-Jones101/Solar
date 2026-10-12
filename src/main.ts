@@ -1269,6 +1269,8 @@ type MoonData = {
 type BillboardState = {
   alpha: number
   visible: boolean
+  hiddenBySize: boolean
+  pixelDiameter: number
 }
 
 type OrbitGap = {
@@ -2159,13 +2161,12 @@ const sunBillboardColor =
 const sunBillboardState: BillboardState = {
   alpha: 1,
   visible: true,
+  hiddenBySize: false,
+  pixelDiameter: 0,
 }
 
 const trackableBodies =
   new Set<Entity>()
-
-const trackableBodyRadii =
-  new Map<Entity, number>()
 
 const sunEntity = viewer.entities.add({
   name: 'Sun',
@@ -2207,11 +2208,6 @@ trackableBodies.add(
   sunEntity
 )
 
-trackableBodyRadii.set(
-  sunEntity,
-  sun_rad
-)
-
 
 // --------------------------------------------------
 // PLANETS
@@ -2239,6 +2235,8 @@ for (const planet of planets) {
   const billboardState: BillboardState = {
     alpha: 1,
     visible: true,
+    hiddenBySize: false,
+    pixelDiameter: 0,
   }
 
   const orbitPositions =
@@ -2326,11 +2324,6 @@ for (const planet of planets) {
     planetEntity
   )
 
-  trackableBodyRadii.set(
-    planetEntity,
-    planet.radius
-  )
-
   planetRenderData.push({
     planet,
     positionProperty,
@@ -2376,6 +2369,8 @@ for (const moon of majorMoons) {
   const billboardState: BillboardState = {
     alpha: 0,
     visible: false,
+    hiddenBySize: false,
+    pixelDiameter: 0,
   }
 
   const orbitPositions =
@@ -2463,11 +2458,6 @@ for (const moon of majorMoons) {
     moonEntity
   )
 
-  trackableBodyRadii.set(
-    moonEntity,
-    moon.radius
-  )
-
   moonRenderData.push({
     moon,
     parent,
@@ -2506,21 +2496,6 @@ function getTrackableBodyAt(
   }
 
   return undefined
-}
-
-function getTrackingRange(
-  entity: Entity
-) {
-  const radius =
-    trackableBodyRadii.get(
-      entity
-    ) ??
-    1_000_000
-
-  return Math.max(
-    radius * 25,
-    2_000_000
-  )
 }
 
 let customTrackedBody:
@@ -2567,16 +2542,96 @@ function focusBodyCamera(
       position
     )
 
-  viewer.camera.lookAt(
-    position,
-    new HeadingPitchRange(
-      0,
-      -0.35,
-      getTrackingRange(
-        entity
-      )
+  const range =
+    Cartesian3.distance(
+      viewer.camera.positionWC,
+      position
     )
+
+  const direction =
+    Cartesian3.clone(
+      viewer.camera.directionWC
+    )
+
+  const up =
+    Cartesian3.clone(
+      viewer.camera.upWC
+    )
+
+  const destination =
+    Cartesian3.subtract(
+      position,
+      Cartesian3.multiplyByScalar(
+        direction,
+        range,
+        new Cartesian3()
+      ),
+      new Cartesian3()
+    )
+
+  viewer.camera.setView({
+    destination,
+
+    orientation: {
+      direction,
+      up,
+    },
+  })
+}
+
+function getTrackedBodyRange() {
+  if (
+    !customTrackedBody ||
+    !customTrackedBodyPosition
+  ) {
+    return undefined
+  }
+
+  return Cartesian3.distance(
+    viewer.camera.positionWC,
+    customTrackedBodyPosition
   )
+}
+
+function keepTrackedBodyCentred(
+  position: Cartesian3
+) {
+  const range =
+    getTrackedBodyRange()
+
+  if (!range) {
+    return
+  }
+
+  const direction =
+    Cartesian3.clone(
+      viewer.camera.directionWC
+    )
+
+  const up =
+    Cartesian3.clone(
+      viewer.camera.upWC
+    )
+
+  const destination =
+    Cartesian3.subtract(
+      position,
+      Cartesian3.multiplyByScalar(
+        direction,
+        range,
+        new Cartesian3()
+      ),
+      new Cartesian3()
+    )
+
+  viewer.camera.setView({
+    destination,
+
+    orientation: {
+      direction,
+      up,
+    },
+  })
 }
 
 function trackBody(
@@ -2708,19 +2763,33 @@ function updateCustomTrackedBodyCamera() {
     return
   }
 
-  const delta =
-    Cartesian3.subtract(
-      position,
-      customTrackedBodyPosition,
-      new Cartesian3()
-    )
+  keepTrackedBodyCentred(
+    position
+  )
 
-  viewer.camera.position =
-    Cartesian3.add(
-      viewer.camera.position,
-      delta,
-      new Cartesian3()
-    )
+  if (
+    customTrackedBody &&
+    viewer.trackedEntity !==
+      customTrackedBody
+  ) {
+    syncingTrackedEntity =
+      true
+
+    viewer.trackedEntity =
+      customTrackedBody
+
+    syncingTrackedEntity =
+      false
+  }
+
+  if (
+    customTrackedBody &&
+    viewer.selectedEntity !==
+      customTrackedBody
+  ) {
+    viewer.selectedEntity =
+      customTrackedBody
+  }
 
   customTrackedBodyPosition =
     Cartesian3.clone(
@@ -3058,6 +3127,16 @@ function drawOrbitOverlay() {
     return
   }
 
+  const localBodyView =
+    planetRenderData.some(
+      (renderData) =>
+        renderData.billboardState.hiddenBySize
+    ) ||
+    moonRenderData.some(
+      (renderData) =>
+        renderData.billboardState.hiddenBySize
+    )
+
   const sunGap =
     createOrbitGap(
     sun_pos,
@@ -3072,49 +3151,57 @@ function drawOrbitOverlay() {
     }
   )
 
-  for (const renderData of planetRenderData) {
-    const planetGap =
-      createOrbitGap(
-      renderData.currentPosition,
-      renderData.planet.radius,
-      {
-        iconPixels: 32,
-        iconAlpha:
-          renderData.billboardState.alpha,
-        minRadius: 2,
-        maxRadius: 34,
-        padding: 5,
-      }
-    )
-
-    const gaps =
-      [
-        sunGap,
-        planetGap,
-      ].filter(
-        (
-          gap
-        ): gap is OrbitGap =>
-          Boolean(
-            gap
-          )
+  if (!localBodyView) {
+    for (const renderData of planetRenderData) {
+      const planetGap =
+        createOrbitGap(
+        renderData.currentPosition,
+        renderData.planet.radius,
+        {
+          iconPixels: 32,
+          iconAlpha:
+            renderData.billboardState.alpha,
+          minRadius: 2,
+          maxRadius: 34,
+          padding: 5,
+        }
       )
 
-    drawOrbitPath(
-      overlay.context,
-      renderData.orbitPositions.getValue(
-        viewer.clock.currentTime
-      ) as Cartesian3[] | undefined,
-      renderData.planet.colour,
-      0.85,
-      1.5,
-      gaps,
-      overlay.width,
-      overlay.height
-    )
+      const gaps =
+        [
+          sunGap,
+          planetGap,
+        ].filter(
+          (
+            gap
+          ): gap is OrbitGap =>
+            Boolean(
+              gap
+            )
+        )
+
+      drawOrbitPath(
+        overlay.context,
+        renderData.orbitPositions.getValue(
+          viewer.clock.currentTime
+        ) as Cartesian3[] | undefined,
+        renderData.planet.colour,
+        0.85,
+        1.5,
+        gaps,
+        overlay.width,
+        overlay.height
+      )
+    }
   }
 
   for (const renderData of moonRenderData) {
+    if (
+      renderData.billboardState.hiddenBySize
+    ) {
+      continue
+    }
+
     const parentGap =
       createOrbitGap(
         renderData.parent.currentPosition,
@@ -3251,6 +3338,9 @@ function updateBillboardFade(
     ) *
     viewer.scene.canvas.clientHeight
 
+  state.pixelDiameter =
+    pixelDiameter
+
 
   // --------------------------------------------------
   // HYSTERESIS
@@ -3280,6 +3370,9 @@ function updateBillboardFade(
       ? 1
       : 0
 
+  state.hiddenBySize =
+    !state.visible
+
   moveBillboardAlphaToward(
     billboardColor,
     state,
@@ -3299,6 +3392,8 @@ function updateMoonBillboardFade(
 ) {
   if (parentBillboardState.alpha > 0.05) {
     state.visible = false
+    state.hiddenBySize = false
+    state.pixelDiameter = 0
 
     moveBillboardAlphaToward(
       billboardColor,
