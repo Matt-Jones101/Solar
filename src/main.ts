@@ -1260,6 +1260,58 @@ type BodyTuningSettings = {
   orbitGapPadding: number
 }
 
+type OrbitTuningSettings = {
+  alphaGapThreshold: number
+  maxSegmentLengthRatio: number
+  hidePlanetOrbitsInTrackedLocalView: boolean
+  planetOrbitAlpha: number
+  moonOrbitAlpha: number
+  planetOrbitWidth: number
+  moonOrbitWidth: number
+}
+
+type CameraTuningSettings = {
+  constrainedAxisCloseupRangeMultiplier: number
+  surfaceZoomLimitMultiplier: number
+  trackedBodyZoomFactor: number
+}
+
+function getDerivedIconFadeInPixelDiameter(
+  iconFadeOutPixelDiameter: number
+) {
+  if (iconFadeOutPixelDiameter <= 0) {
+    return 0
+  }
+
+  const hysteresis =
+    Math.max(
+      0.5,
+      iconFadeOutPixelDiameter * 0.125
+    )
+
+  return Math.max(
+    0,
+    Math.round(
+      (
+        iconFadeOutPixelDiameter -
+        hysteresis
+      ) *
+      100
+    ) / 100
+  )
+}
+
+function syncDerivedBodyTuningSettings(
+  settings: BodyTuningSettings
+) {
+  settings.iconFadeInPixelDiameter =
+    getDerivedIconFadeInPixelDiameter(
+      settings.iconFadeOutPixelDiameter
+    )
+
+  return settings
+}
+
 const DEFAULT_BODY_TUNING_SETTINGS:
   Record<
     BodyKind,
@@ -1267,7 +1319,10 @@ const DEFAULT_BODY_TUNING_SETTINGS:
   > = {
     sun: {
       iconFadeOutPixelDiameter: 16,
-      iconFadeInPixelDiameter: 15.5,
+      iconFadeInPixelDiameter:
+        getDerivedIconFadeInPixelDiameter(
+          16
+        ),
       orbitHidePixelDiameter: 0,
       localViewPixelDiameter: 16,
       orbitGapIconPixels: 32,
@@ -1278,7 +1333,10 @@ const DEFAULT_BODY_TUNING_SETTINGS:
 
     planet: {
       iconFadeOutPixelDiameter: 16,
-      iconFadeInPixelDiameter: 15.5,
+      iconFadeInPixelDiameter:
+        getDerivedIconFadeInPixelDiameter(
+          16
+        ),
       orbitHidePixelDiameter: 0,
       localViewPixelDiameter: 16,
       orbitGapIconPixels: 32,
@@ -1289,7 +1347,10 @@ const DEFAULT_BODY_TUNING_SETTINGS:
 
     moon: {
       iconFadeOutPixelDiameter: 32,
-      iconFadeInPixelDiameter: 28,
+      iconFadeInPixelDiameter:
+        getDerivedIconFadeInPixelDiameter(
+          32
+        ),
       orbitHidePixelDiameter: 32,
       localViewPixelDiameter: 16,
       orbitGapIconPixels: 20,
@@ -1323,7 +1384,8 @@ const bodyTuningOverrides =
     BodyTuningSettings
   >()
 
-const orbitTuningSettings = {
+const DEFAULT_ORBIT_TUNING_SETTINGS:
+  OrbitTuningSettings = {
   alphaGapThreshold: 0.05,
   maxSegmentLengthRatio: 0.7,
   hidePlanetOrbitsInTrackedLocalView: true,
@@ -1333,7 +1395,13 @@ const orbitTuningSettings = {
   moonOrbitWidth: 1,
 }
 
-const cameraTuningSettings = {
+const orbitTuningSettings:
+  OrbitTuningSettings = {
+  ...DEFAULT_ORBIT_TUNING_SETTINGS,
+}
+
+const DEFAULT_CAMERA_TUNING_SETTINGS:
+  CameraTuningSettings = {
   constrainedAxisCloseupRangeMultiplier:
     CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER,
 
@@ -1342,6 +1410,11 @@ const cameraTuningSettings = {
 
   trackedBodyZoomFactor:
     TRACKED_BODY_ZOOM_FACTOR,
+}
+
+const cameraTuningSettings:
+  CameraTuningSettings = {
+  ...DEFAULT_CAMERA_TUNING_SETTINGS,
 }
 
 // J2000 obliquity.
@@ -3045,6 +3118,10 @@ const settingsTargetLabel =
 
 settingsTargetLabel.textContent =
   'Target'
+configureSettingLabel(
+  settingsTargetLabel,
+  'Choose whether the per-body controls edit a default body type or one specific body.'
+)
 
 const settingsTargetSelect =
   document.createElement(
@@ -3091,7 +3168,7 @@ const settingsUseSelectedButton =
 settingsUseSelectedButton.type =
   'button'
 settingsUseSelectedButton.textContent =
-  'Use selected body'
+  'Switch to selected body'
 
 const settingsResetButton =
   document.createElement(
@@ -3101,12 +3178,33 @@ const settingsResetButton =
 settingsResetButton.type =
   'button'
 settingsResetButton.textContent =
-  'Reset target'
+  "Reset this body's settings"
+
+const settingsResetGlobalButton =
+  document.createElement(
+    'button'
+  )
+
+settingsResetGlobalButton.type =
+  'button'
+settingsResetGlobalButton.textContent =
+  'Reset global settings'
 
 settingsActions.append(
   settingsUseSelectedButton,
-  settingsResetButton
+  settingsResetButton,
+  settingsResetGlobalButton
 )
+
+const settingsScopeNote =
+  document.createElement(
+    'p'
+  )
+
+settingsScopeNote.className =
+  'solar-settings-note'
+settingsScopeNote.textContent =
+  'Per-body sections edit the selected target. Global sections affect every body.'
 
 function getSettingsTargetById(
   targetId: string
@@ -3203,9 +3301,36 @@ function createSettingsSection(
   return section
 }
 
+function formatSettingNumber(
+  value: number
+) {
+  return Number.isInteger(
+    value
+  )
+    ? value.toString()
+    : Number(
+      value.toFixed(
+        2
+      )
+    ).toString()
+}
+
+function configureSettingLabel(
+  label: HTMLElement,
+  tooltipText: string
+) {
+  label.className =
+    'solar-setting-label'
+  label.title =
+    tooltipText
+  label.tabIndex =
+    0
+}
+
 function createNumberControl(
   section: HTMLElement,
   labelText: string,
+  tooltipText: string,
   min: number,
   max: number,
   step: number,
@@ -3227,6 +3352,10 @@ function createNumberControl(
 
   label.textContent =
     labelText
+  configureSettingLabel(
+    label,
+    tooltipText
+  )
 
   const controls =
     document.createElement(
@@ -3353,9 +3482,69 @@ function createNumberControl(
   control.refresh()
 }
 
+function createReadOnlyNumberControl(
+  section: HTMLElement,
+  labelText: string,
+  tooltipText: string,
+  getValue: () => number
+) {
+  const row =
+    document.createElement(
+      'div'
+    )
+
+  row.className =
+    'solar-setting-row'
+
+  const label =
+    document.createElement(
+      'span'
+    )
+
+  label.textContent =
+    labelText
+  configureSettingLabel(
+    label,
+    tooltipText
+  )
+
+  const output =
+    document.createElement(
+      'output'
+    )
+
+  output.className =
+    'solar-setting-readonly'
+
+  row.append(
+    label,
+    output
+  )
+
+  section.appendChild(
+    row
+  )
+
+  const control = {
+    refresh: () => {
+      output.textContent =
+        formatSettingNumber(
+          getValue()
+        )
+    },
+  }
+
+  refreshableControls.push(
+    control
+  )
+
+  control.refresh()
+}
+
 function createCheckboxControl(
   section: HTMLElement,
   labelText: string,
+  tooltipText: string,
   getValue: () => boolean,
   setValue: (value: boolean) => void
 ) {
@@ -3382,6 +3571,10 @@ function createCheckboxControl(
 
   label.textContent =
     labelText
+  configureSettingLabel(
+    label,
+    tooltipText
+  )
 
   checkbox.addEventListener(
     'change',
@@ -3417,12 +3610,13 @@ function createCheckboxControl(
 
 const iconSection =
   createSettingsSection(
-    'Body thresholds'
+    'Per-body thresholds'
   )
 
 createNumberControl(
   iconSection,
   'Icon fade out px',
+  'Pixel diameter where this body starts switching from its icon to its physical sphere.',
   0,
   128,
   0.5,
@@ -3430,31 +3624,31 @@ createNumberControl(
     getActiveBodySettings()
       .iconFadeOutPixelDiameter,
   (value) => {
-    getMutableActiveBodySettings()
-      .iconFadeOutPixelDiameter =
+    const settings =
+      getMutableActiveBodySettings()
+
+    settings.iconFadeOutPixelDiameter =
       value
+    syncDerivedBodyTuningSettings(
+      settings
+    )
+    refreshSettingsControls()
   }
 )
 
-createNumberControl(
+createReadOnlyNumberControl(
   iconSection,
   'Icon fade in px',
-  0,
-  128,
-  0.5,
+  'Locked value derived from fade out. It gives the icon a small hysteresis gap so it does not flicker near the threshold.',
   () =>
     getActiveBodySettings()
-      .iconFadeInPixelDiameter,
-  (value) => {
-    getMutableActiveBodySettings()
-      .iconFadeInPixelDiameter =
-      value
-  }
+      .iconFadeInPixelDiameter
 )
 
 createNumberControl(
   iconSection,
   'Orbit hide px',
+  "Pixel diameter where this body's own orbit line hides as the body becomes large on screen.",
   0,
   256,
   0.5,
@@ -3471,6 +3665,7 @@ createNumberControl(
 createNumberControl(
   iconSection,
   'Local view px',
+  'Pixel diameter that counts as a close local view around the tracked body for hiding distant clutter.',
   0,
   128,
   0.5,
@@ -3486,12 +3681,13 @@ createNumberControl(
 
 const gapSection =
   createSettingsSection(
-    'Orbit gaps'
+    'Per-body orbit gaps'
   )
 
 createNumberControl(
   gapSection,
   'Gap icon px',
+  'Icon-size estimate used when cutting a gap in this body orbit line around the body marker.',
   0,
   96,
   0.5,
@@ -3508,6 +3704,7 @@ createNumberControl(
 createNumberControl(
   gapSection,
   'Gap min radius',
+  'Smallest screen-space gap radius allowed around this body on its orbit line.',
   0,
   64,
   0.5,
@@ -3524,6 +3721,7 @@ createNumberControl(
 createNumberControl(
   gapSection,
   'Gap max radius',
+  'Largest screen-space gap radius allowed around this body on its orbit line.',
   0,
   128,
   0.5,
@@ -3540,6 +3738,7 @@ createNumberControl(
 createNumberControl(
   gapSection,
   'Gap padding',
+  'Extra pixels added around the body marker before its orbit line resumes.',
   0,
   64,
   0.5,
@@ -3555,12 +3754,13 @@ createNumberControl(
 
 const globalOrbitSection =
   createSettingsSection(
-    'Orbit lines'
+    'Global orbit lines'
   )
 
 createCheckboxControl(
   globalOrbitSection,
   'Hide planet orbits in local view',
+  'When viewing a body up close, hide unrelated planet orbit lines so the local system stays readable.',
   () =>
     orbitTuningSettings
       .hidePlanetOrbitsInTrackedLocalView,
@@ -3574,6 +3774,7 @@ createCheckboxControl(
 createNumberControl(
   globalOrbitSection,
   'Gap alpha threshold',
+  'Lowest projected gap strength that still cuts the orbit line.',
   0,
   1,
   0.01,
@@ -3590,6 +3791,7 @@ createNumberControl(
 createNumberControl(
   globalOrbitSection,
   'Max segment ratio',
+  'Maximum orbit segment length relative to the viewport before the overlay splits or skips it.',
   0.1,
   2,
   0.05,
@@ -3606,6 +3808,7 @@ createNumberControl(
 createNumberControl(
   globalOrbitSection,
   'Planet orbit alpha',
+  'Opacity for all planet orbit lines.',
   0,
   1,
   0.01,
@@ -3622,6 +3825,7 @@ createNumberControl(
 createNumberControl(
   globalOrbitSection,
   'Planet orbit width',
+  'Line width in pixels for all planet orbit lines.',
   0.25,
   5,
   0.25,
@@ -3638,6 +3842,7 @@ createNumberControl(
 createNumberControl(
   globalOrbitSection,
   'Moon orbit alpha',
+  'Opacity for all moon orbit lines.',
   0,
   1,
   0.01,
@@ -3654,6 +3859,7 @@ createNumberControl(
 createNumberControl(
   globalOrbitSection,
   'Moon orbit width',
+  'Line width in pixels for all moon orbit lines.',
   0.25,
   5,
   0.25,
@@ -3669,12 +3875,13 @@ createNumberControl(
 
 const cameraSection =
   createSettingsSection(
-    'Camera'
+    'Global camera'
   )
 
 createNumberControl(
   cameraSection,
   'Axis close-up x radius',
+  'How close the camera must be, measured in body radii, before constrained orbiting relaxes.',
   1,
   30,
   0.25,
@@ -3691,6 +3898,7 @@ createNumberControl(
 createNumberControl(
   cameraSection,
   'Surface zoom x radius',
+  'Minimum camera distance from the active body centre, measured as a multiple of its radius.',
   1,
   2,
   0.01,
@@ -3707,6 +3915,7 @@ createNumberControl(
 createNumberControl(
   cameraSection,
   'Tracked zoom factor',
+  'Cesium zoom speed multiplier while orbiting a selected body.',
   1,
   20,
   0.25,
@@ -3724,6 +3933,7 @@ settingsPanel.append(
   settingsHeader,
   settingsTargetRow,
   settingsActions,
+  settingsScopeNote,
   iconSection,
   gapSection,
   globalOrbitSection,
@@ -3810,6 +4020,23 @@ settingsResetButton.addEventListener(
         ]
       )
     }
+
+    refreshSettingsControls()
+  }
+)
+
+settingsResetGlobalButton.addEventListener(
+  'click',
+  () => {
+    Object.assign(
+      orbitTuningSettings,
+      DEFAULT_ORBIT_TUNING_SETTINGS
+    )
+
+    Object.assign(
+      cameraTuningSettings,
+      DEFAULT_CAMERA_TUNING_SETTINGS
+    )
 
     refreshSettingsControls()
   }
