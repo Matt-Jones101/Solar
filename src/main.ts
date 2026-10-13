@@ -1492,6 +1492,7 @@ type BillboardState = {
   alpha: number
   visible: boolean
   hiddenBySize: boolean
+  suppressedByContext: boolean
   pixelDiameter: number
 }
 
@@ -1507,7 +1508,6 @@ type SegmentInterval = {
 
 type OrbitGapOptions = {
   iconPixels: number
-  iconAlpha: number
   minRadius: number
   maxRadius: number
   padding: number
@@ -2582,6 +2582,7 @@ const sunBillboardState: BillboardState = {
   alpha: 1,
   visible: true,
   hiddenBySize: false,
+  suppressedByContext: false,
   pixelDiameter: 0,
 }
 
@@ -2679,6 +2680,7 @@ for (const planet of planets) {
     alpha: 1,
     visible: true,
     hiddenBySize: false,
+    suppressedByContext: false,
     pixelDiameter: 0,
   }
 
@@ -2850,6 +2852,7 @@ for (const moon of majorMoons) {
     alpha: 0,
     visible: false,
     hiddenBySize: false,
+    suppressedByContext: false,
     pixelDiameter: 0,
   }
 
@@ -5548,6 +5551,7 @@ function getBodyPixelRadius(
 function createOrbitGap(
   position: Cartesian3,
   radius: number,
+  state: BillboardState,
   options: OrbitGapOptions
 ) {
   const centre =
@@ -5565,10 +5569,23 @@ function createOrbitGap(
       radius
     )
 
+  const iconBaseRadius =
+    options.iconPixels / 2
+
   const iconRadius =
-    options.iconAlpha >
-    orbitTuningSettings.alphaGapThreshold
-      ? options.iconPixels / 2
+    (
+      !state.suppressedByContext &&
+      (
+        state.visible ||
+        state.alpha >
+          orbitTuningSettings.alphaGapThreshold ||
+        (
+          state.hiddenBySize &&
+          bodyPixels < iconBaseRadius
+        )
+      )
+    )
+      ? iconBaseRadius
       : 0
 
   const visibleRadius =
@@ -6018,15 +6035,15 @@ function createBodyOrbitGap(
   position: Cartesian3,
   radius: number,
   settings: BodyTuningSettings,
-  iconAlpha: number
+  state: BillboardState
 ) {
   return createOrbitGap(
     position,
     radius,
+    state,
     {
       iconPixels:
         settings.orbitGapIconPixels,
-      iconAlpha,
       minRadius:
         settings.orbitGapMinRadius,
       maxRadius:
@@ -6075,7 +6092,7 @@ function drawOrbitOverlay() {
       sunRenderPosition,
       sun_rad,
       sunSettings,
-      sunBillboardState.alpha
+      sunBillboardState
     )
 
   if (!hidePlanetOrbits) {
@@ -6090,7 +6107,7 @@ function drawOrbitOverlay() {
           renderData.currentPosition,
           renderData.planet.radius,
           planetSettings,
-          renderData.billboardState.alpha
+          renderData.billboardState
         )
 
       const gaps =
@@ -6148,7 +6165,7 @@ function drawOrbitOverlay() {
           getPlanetTuning(
             parent
           ),
-          parent.billboardState.alpha
+          parent.billboardState
         )
 
       const moonGaps =
@@ -6165,7 +6182,7 @@ function drawOrbitOverlay() {
                 getMoonTuning(
                   renderData
                 ),
-                renderData.billboardState.alpha
+                renderData.billboardState
               )
           )
 
@@ -6315,6 +6332,9 @@ function updateBillboardFade(
       radius
     )
 
+  state.suppressedByContext =
+    false
+
   state.pixelDiameter =
     pixelDiameter
 
@@ -6371,12 +6391,20 @@ function updateMoonBillboardFade(
 ) {
   if (
     !parentIconSuppressed &&
-    parentBillboardState.visible &&
+    !parentBillboardState
+      .suppressedByContext &&
+    !parentBillboardState
+      .hiddenBySize &&
     parentBillboardState.alpha > 0.05
   ) {
     state.visible = false
     state.hiddenBySize = false
-    state.pixelDiameter = 0
+    state.suppressedByContext = true
+    state.pixelDiameter =
+      getPixelDiameter(
+        position,
+        radius
+      )
 
     moveBillboardAlphaToward(
       billboardColor,
@@ -6445,6 +6473,9 @@ function hideBillboardForLocalBodyView(
   state: BillboardState,
   deltaSeconds: number
 ) {
+  state.suppressedByContext =
+    true
+
   moveBillboardAlphaToward(
     billboardColor,
     state,
