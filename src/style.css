@@ -7,3 +7,130 @@ body,
   padding: 0;
   overflow: hidden;
 }
+
+.solar-settings-button {
+  position: absolute;
+  top: 50px;
+  right: 10px;
+  z-index: 3;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(22, 26, 32, 0.9);
+  color: #fff;
+  font: 13px/1.2 sans-serif;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.solar-settings-button:hover,
+.solar-settings-panel button:hover {
+  background: rgba(54, 62, 74, 0.95);
+}
+
+.solar-settings-panel {
+  position: absolute;
+  top: 88px;
+  right: 10px;
+  z-index: 3;
+  width: min(380px, calc(100vw - 20px));
+  max-height: calc(100vh - 112px);
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(13, 16, 20, 0.94);
+  color: #f4f7fb;
+  font: 13px/1.35 sans-serif;
+  padding: 12px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45);
+}
+
+.solar-settings-panel[hidden] {
+  display: none;
+}
+
+.solar-settings-header,
+.solar-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.solar-settings-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.solar-settings-panel button,
+.solar-settings-panel select,
+.solar-settings-panel input {
+  color: #f4f7fb;
+  font: inherit;
+}
+
+.solar-settings-panel button,
+.solar-settings-panel select,
+.solar-settings-panel input[type='number'] {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.solar-settings-panel button {
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.solar-settings-panel select {
+  min-width: 0;
+  width: 100%;
+  padding: 5px 6px;
+}
+
+.solar-settings-actions {
+  margin-top: 10px;
+}
+
+.solar-settings-section {
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: 8px;
+}
+
+.solar-settings-section summary {
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.solar-setting-row {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.85fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.solar-setting-row-select {
+  margin-top: 12px;
+}
+
+.solar-setting-row-checkbox {
+  grid-template-columns: 18px 1fr;
+}
+
+.solar-setting-control {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) 68px;
+  align-items: center;
+  gap: 8px;
+}
+
+.solar-setting-control input[type='range'] {
+  min-width: 0;
+}
+
+.solar-setting-control input[type='number'] {
+  width: 68px;
+  box-sizing: border-box;
+  padding: 4px 5px;
+}

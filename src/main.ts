@@ -1244,9 +1244,105 @@ const sun_pos = Cartesian3.ZERO
 const BODY_STACK_PARTITIONS = 128
 const BODY_SLICE_PARTITIONS = 128
 
-const MOON_ICON_FADE_OUT_PIXEL_DIAMETER = 32
-const MOON_ICON_FADE_IN_PIXEL_DIAMETER = 28
-const LOCAL_BODY_VIEW_PIXEL_DIAMETER = 16
+type BodyKind =
+  | 'sun'
+  | 'planet'
+  | 'moon'
+
+type BodyTuningSettings = {
+  iconFadeOutPixelDiameter: number
+  iconFadeInPixelDiameter: number
+  orbitHidePixelDiameter: number
+  localViewPixelDiameter: number
+  orbitGapIconPixels: number
+  orbitGapMinRadius: number
+  orbitGapMaxRadius: number
+  orbitGapPadding: number
+}
+
+const DEFAULT_BODY_TUNING_SETTINGS:
+  Record<
+    BodyKind,
+    BodyTuningSettings
+  > = {
+    sun: {
+      iconFadeOutPixelDiameter: 16,
+      iconFadeInPixelDiameter: 15.5,
+      orbitHidePixelDiameter: 0,
+      localViewPixelDiameter: 16,
+      orbitGapIconPixels: 32,
+      orbitGapMinRadius: 2,
+      orbitGapMaxRadius: 34,
+      orbitGapPadding: 5,
+    },
+
+    planet: {
+      iconFadeOutPixelDiameter: 16,
+      iconFadeInPixelDiameter: 15.5,
+      orbitHidePixelDiameter: 0,
+      localViewPixelDiameter: 16,
+      orbitGapIconPixels: 32,
+      orbitGapMinRadius: 2,
+      orbitGapMaxRadius: 46,
+      orbitGapPadding: 5,
+    },
+
+    moon: {
+      iconFadeOutPixelDiameter: 32,
+      iconFadeInPixelDiameter: 28,
+      orbitHidePixelDiameter: 32,
+      localViewPixelDiameter: 16,
+      orbitGapIconPixels: 20,
+      orbitGapMinRadius: 3,
+      orbitGapMaxRadius: 14,
+      orbitGapPadding: 4,
+    },
+  }
+
+const bodyTuningSettings:
+  Record<
+    BodyKind,
+    BodyTuningSettings
+  > = {
+    sun: {
+      ...DEFAULT_BODY_TUNING_SETTINGS.sun,
+    },
+
+    planet: {
+      ...DEFAULT_BODY_TUNING_SETTINGS.planet,
+    },
+
+    moon: {
+      ...DEFAULT_BODY_TUNING_SETTINGS.moon,
+    },
+  }
+
+const bodyTuningOverrides =
+  new Map<
+    string,
+    BodyTuningSettings
+  >()
+
+const orbitTuningSettings = {
+  alphaGapThreshold: 0.05,
+  maxSegmentLengthRatio: 0.7,
+  hidePlanetOrbitsInTrackedLocalView: true,
+  planetOrbitAlpha: 0.85,
+  moonOrbitAlpha: 0.7,
+  planetOrbitWidth: 1.5,
+  moonOrbitWidth: 1,
+}
+
+const cameraTuningSettings = {
+  constrainedAxisCloseupRangeMultiplier:
+    CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER,
+
+  surfaceZoomLimitMultiplier:
+    SURFACE_ZOOM_LIMIT_MULTIPLIER,
+
+  trackedBodyZoomFactor:
+    TRACKED_BODY_ZOOM_FACTOR,
+}
 
 // J2000 obliquity.
 //
@@ -2804,6 +2900,923 @@ for (const moon of majorMoons) {
 
 
 // --------------------------------------------------
+// LIVE TUNING PANEL
+// --------------------------------------------------
+
+type SettingsTarget = {
+  id: string
+  label: string
+  kind: BodyKind
+  bodyName?: string
+}
+
+type RefreshableControl = {
+  refresh: () => void
+}
+
+const settingsTargets: SettingsTarget[] = [
+  {
+    id: 'default:sun',
+    label: 'Sun defaults',
+    kind: 'sun',
+  },
+
+  {
+    id: 'default:planet',
+    label: 'Planet defaults',
+    kind: 'planet',
+  },
+
+  {
+    id: 'default:moon',
+    label: 'Moon defaults',
+    kind: 'moon',
+  },
+
+  {
+    id: 'body:Sun',
+    label: 'Sun',
+    kind: 'sun',
+    bodyName: 'Sun',
+  },
+
+  ...planetRenderData.map(
+    (renderData) => ({
+      id:
+        `body:${renderData.planet.name}`,
+      label:
+        renderData.planet.name,
+      kind:
+        'planet' as BodyKind,
+      bodyName:
+        renderData.planet.name,
+    })
+  ),
+
+  ...moonRenderData.map(
+    (renderData) => ({
+      id:
+        `body:${renderData.moon.name}`,
+      label:
+        `${renderData.moon.name} (${renderData.parent.planet.name})`,
+      kind:
+        'moon' as BodyKind,
+      bodyName:
+        renderData.moon.name,
+    })
+  ),
+]
+
+let activeSettingsTarget =
+  settingsTargets[2]
+
+const refreshableControls:
+  RefreshableControl[] = []
+
+const settingsButton =
+  document.createElement(
+    'button'
+  )
+
+settingsButton.type =
+  'button'
+settingsButton.className =
+  'solar-settings-button'
+settingsButton.textContent =
+  'Settings'
+
+const settingsPanel =
+  document.createElement(
+    'section'
+  )
+
+settingsPanel.className =
+  'solar-settings-panel'
+settingsPanel.hidden =
+  true
+settingsPanel.setAttribute(
+  'aria-label',
+  'Solar tuning settings'
+)
+
+const settingsHeader =
+  document.createElement(
+    'div'
+  )
+
+settingsHeader.className =
+  'solar-settings-header'
+
+const settingsTitle =
+  document.createElement(
+    'h2'
+  )
+
+settingsTitle.textContent =
+  'Live settings'
+
+const settingsCloseButton =
+  document.createElement(
+    'button'
+  )
+
+settingsCloseButton.type =
+  'button'
+settingsCloseButton.textContent =
+  'Close'
+
+settingsHeader.append(
+  settingsTitle,
+  settingsCloseButton
+)
+
+const settingsTargetRow =
+  document.createElement(
+    'label'
+  )
+
+settingsTargetRow.className =
+  'solar-setting-row solar-setting-row-select'
+
+const settingsTargetLabel =
+  document.createElement(
+    'span'
+  )
+
+settingsTargetLabel.textContent =
+  'Target'
+
+const settingsTargetSelect =
+  document.createElement(
+    'select'
+  )
+
+for (const target of settingsTargets) {
+  const option =
+    document.createElement(
+      'option'
+    )
+
+  option.value =
+    target.id
+  option.textContent =
+    target.label
+
+  settingsTargetSelect.appendChild(
+    option
+  )
+}
+
+settingsTargetSelect.value =
+  activeSettingsTarget.id
+
+settingsTargetRow.append(
+  settingsTargetLabel,
+  settingsTargetSelect
+)
+
+const settingsActions =
+  document.createElement(
+    'div'
+  )
+
+settingsActions.className =
+  'solar-settings-actions'
+
+const settingsUseSelectedButton =
+  document.createElement(
+    'button'
+  )
+
+settingsUseSelectedButton.type =
+  'button'
+settingsUseSelectedButton.textContent =
+  'Use selected body'
+
+const settingsResetButton =
+  document.createElement(
+    'button'
+  )
+
+settingsResetButton.type =
+  'button'
+settingsResetButton.textContent =
+  'Reset target'
+
+settingsActions.append(
+  settingsUseSelectedButton,
+  settingsResetButton
+)
+
+function getSettingsTargetById(
+  targetId: string
+) {
+  return (
+    settingsTargets.find(
+      (target) =>
+        target.id === targetId
+    ) ??
+    settingsTargets[2]
+  )
+}
+
+function getActiveBodySettings() {
+  if (
+    activeSettingsTarget.bodyName
+  ) {
+    return getBodyTuningSettings(
+      activeSettingsTarget.bodyName,
+      activeSettingsTarget.kind
+    )
+  }
+
+  return bodyTuningSettings[
+    activeSettingsTarget.kind
+  ]
+}
+
+function getMutableActiveBodySettings() {
+  if (
+    activeSettingsTarget.bodyName
+  ) {
+    const existingOverride =
+      bodyTuningOverrides.get(
+        activeSettingsTarget.bodyName
+      )
+
+    if (existingOverride) {
+      return existingOverride
+    }
+
+    const override =
+      cloneBodyTuningSettings(
+        getBodyTuningSettings(
+          activeSettingsTarget.bodyName,
+          activeSettingsTarget.kind
+        )
+      )
+
+    bodyTuningOverrides.set(
+      activeSettingsTarget.bodyName,
+      override
+    )
+
+    return override
+  }
+
+  return bodyTuningSettings[
+    activeSettingsTarget.kind
+  ]
+}
+
+function refreshSettingsControls() {
+  for (const control of refreshableControls) {
+    control.refresh()
+  }
+}
+
+function createSettingsSection(
+  title: string
+) {
+  const section =
+    document.createElement(
+      'details'
+    )
+
+  section.className =
+    'solar-settings-section'
+  section.open =
+    true
+
+  const summary =
+    document.createElement(
+      'summary'
+    )
+
+  summary.textContent =
+    title
+
+  section.appendChild(
+    summary
+  )
+
+  return section
+}
+
+function createNumberControl(
+  section: HTMLElement,
+  labelText: string,
+  min: number,
+  max: number,
+  step: number,
+  getValue: () => number,
+  setValue: (value: number) => void
+) {
+  const row =
+    document.createElement(
+      'label'
+    )
+
+  row.className =
+    'solar-setting-row'
+
+  const label =
+    document.createElement(
+      'span'
+    )
+
+  label.textContent =
+    labelText
+
+  const controls =
+    document.createElement(
+      'div'
+    )
+
+  controls.className =
+    'solar-setting-control'
+
+  const range =
+    document.createElement(
+      'input'
+    )
+
+  range.type =
+    'range'
+  range.min =
+    min.toString()
+  range.max =
+    max.toString()
+  range.step =
+    step.toString()
+
+  const number =
+    document.createElement(
+      'input'
+    )
+
+  number.type =
+    'number'
+  number.min =
+    min.toString()
+  number.max =
+    max.toString()
+  number.step =
+    step.toString()
+
+  const setInputs =
+    (value: number) => {
+      const text =
+        value.toString()
+
+      range.value =
+        text
+      number.value =
+        text
+    }
+
+  const commitValue =
+    (value: number) => {
+      if (
+        !Number.isFinite(
+          value
+        )
+      ) {
+        return
+      }
+
+      const clamped =
+        Math.min(
+          max,
+          Math.max(
+            min,
+            value
+          )
+        )
+
+      setValue(
+        clamped
+      )
+      setInputs(
+        clamped
+      )
+    }
+
+  range.addEventListener(
+    'input',
+    () => {
+      commitValue(
+        Number(
+          range.value
+        )
+      )
+    }
+  )
+
+  number.addEventListener(
+    'input',
+    () => {
+      commitValue(
+        Number(
+          number.value
+        )
+      )
+    }
+  )
+
+  controls.append(
+    range,
+    number
+  )
+
+  row.append(
+    label,
+    controls
+  )
+
+  section.appendChild(
+    row
+  )
+
+  const control = {
+    refresh: () => {
+      setInputs(
+        getValue()
+      )
+    },
+  }
+
+  refreshableControls.push(
+    control
+  )
+
+  control.refresh()
+}
+
+function createCheckboxControl(
+  section: HTMLElement,
+  labelText: string,
+  getValue: () => boolean,
+  setValue: (value: boolean) => void
+) {
+  const row =
+    document.createElement(
+      'label'
+    )
+
+  row.className =
+    'solar-setting-row solar-setting-row-checkbox'
+
+  const checkbox =
+    document.createElement(
+      'input'
+    )
+
+  checkbox.type =
+    'checkbox'
+
+  const label =
+    document.createElement(
+      'span'
+    )
+
+  label.textContent =
+    labelText
+
+  checkbox.addEventListener(
+    'change',
+    () => {
+      setValue(
+        checkbox.checked
+      )
+    }
+  )
+
+  row.append(
+    checkbox,
+    label
+  )
+
+  section.appendChild(
+    row
+  )
+
+  const control = {
+    refresh: () => {
+      checkbox.checked =
+        getValue()
+    },
+  }
+
+  refreshableControls.push(
+    control
+  )
+
+  control.refresh()
+}
+
+const iconSection =
+  createSettingsSection(
+    'Body thresholds'
+  )
+
+createNumberControl(
+  iconSection,
+  'Icon fade out px',
+  0,
+  128,
+  0.5,
+  () =>
+    getActiveBodySettings()
+      .iconFadeOutPixelDiameter,
+  (value) => {
+    getMutableActiveBodySettings()
+      .iconFadeOutPixelDiameter =
+      value
+  }
+)
+
+createNumberControl(
+  iconSection,
+  'Icon fade in px',
+  0,
+  128,
+  0.5,
+  () =>
+    getActiveBodySettings()
+      .iconFadeInPixelDiameter,
+  (value) => {
+    getMutableActiveBodySettings()
+      .iconFadeInPixelDiameter =
+      value
+  }
+)
+
+createNumberControl(
+  iconSection,
+  'Orbit hide px',
+  0,
+  256,
+  0.5,
+  () =>
+    getActiveBodySettings()
+      .orbitHidePixelDiameter,
+  (value) => {
+    getMutableActiveBodySettings()
+      .orbitHidePixelDiameter =
+      value
+  }
+)
+
+createNumberControl(
+  iconSection,
+  'Local view px',
+  0,
+  128,
+  0.5,
+  () =>
+    getActiveBodySettings()
+      .localViewPixelDiameter,
+  (value) => {
+    getMutableActiveBodySettings()
+      .localViewPixelDiameter =
+      value
+  }
+)
+
+const gapSection =
+  createSettingsSection(
+    'Orbit gaps'
+  )
+
+createNumberControl(
+  gapSection,
+  'Gap icon px',
+  0,
+  96,
+  0.5,
+  () =>
+    getActiveBodySettings()
+      .orbitGapIconPixels,
+  (value) => {
+    getMutableActiveBodySettings()
+      .orbitGapIconPixels =
+      value
+  }
+)
+
+createNumberControl(
+  gapSection,
+  'Gap min radius',
+  0,
+  64,
+  0.5,
+  () =>
+    getActiveBodySettings()
+      .orbitGapMinRadius,
+  (value) => {
+    getMutableActiveBodySettings()
+      .orbitGapMinRadius =
+      value
+  }
+)
+
+createNumberControl(
+  gapSection,
+  'Gap max radius',
+  0,
+  128,
+  0.5,
+  () =>
+    getActiveBodySettings()
+      .orbitGapMaxRadius,
+  (value) => {
+    getMutableActiveBodySettings()
+      .orbitGapMaxRadius =
+      value
+  }
+)
+
+createNumberControl(
+  gapSection,
+  'Gap padding',
+  0,
+  64,
+  0.5,
+  () =>
+    getActiveBodySettings()
+      .orbitGapPadding,
+  (value) => {
+    getMutableActiveBodySettings()
+      .orbitGapPadding =
+      value
+  }
+)
+
+const globalOrbitSection =
+  createSettingsSection(
+    'Orbit lines'
+  )
+
+createCheckboxControl(
+  globalOrbitSection,
+  'Hide planet orbits in local view',
+  () =>
+    orbitTuningSettings
+      .hidePlanetOrbitsInTrackedLocalView,
+  (value) => {
+    orbitTuningSettings
+      .hidePlanetOrbitsInTrackedLocalView =
+      value
+  }
+)
+
+createNumberControl(
+  globalOrbitSection,
+  'Gap alpha threshold',
+  0,
+  1,
+  0.01,
+  () =>
+    orbitTuningSettings
+      .alphaGapThreshold,
+  (value) => {
+    orbitTuningSettings
+      .alphaGapThreshold =
+      value
+  }
+)
+
+createNumberControl(
+  globalOrbitSection,
+  'Max segment ratio',
+  0.1,
+  2,
+  0.05,
+  () =>
+    orbitTuningSettings
+      .maxSegmentLengthRatio,
+  (value) => {
+    orbitTuningSettings
+      .maxSegmentLengthRatio =
+      value
+  }
+)
+
+createNumberControl(
+  globalOrbitSection,
+  'Planet orbit alpha',
+  0,
+  1,
+  0.01,
+  () =>
+    orbitTuningSettings
+      .planetOrbitAlpha,
+  (value) => {
+    orbitTuningSettings
+      .planetOrbitAlpha =
+      value
+  }
+)
+
+createNumberControl(
+  globalOrbitSection,
+  'Planet orbit width',
+  0.25,
+  5,
+  0.25,
+  () =>
+    orbitTuningSettings
+      .planetOrbitWidth,
+  (value) => {
+    orbitTuningSettings
+      .planetOrbitWidth =
+      value
+  }
+)
+
+createNumberControl(
+  globalOrbitSection,
+  'Moon orbit alpha',
+  0,
+  1,
+  0.01,
+  () =>
+    orbitTuningSettings
+      .moonOrbitAlpha,
+  (value) => {
+    orbitTuningSettings
+      .moonOrbitAlpha =
+      value
+  }
+)
+
+createNumberControl(
+  globalOrbitSection,
+  'Moon orbit width',
+  0.25,
+  5,
+  0.25,
+  () =>
+    orbitTuningSettings
+      .moonOrbitWidth,
+  (value) => {
+    orbitTuningSettings
+      .moonOrbitWidth =
+      value
+  }
+)
+
+const cameraSection =
+  createSettingsSection(
+    'Camera'
+  )
+
+createNumberControl(
+  cameraSection,
+  'Axis close-up x radius',
+  1,
+  30,
+  0.25,
+  () =>
+    cameraTuningSettings
+      .constrainedAxisCloseupRangeMultiplier,
+  (value) => {
+    cameraTuningSettings
+      .constrainedAxisCloseupRangeMultiplier =
+      value
+  }
+)
+
+createNumberControl(
+  cameraSection,
+  'Surface zoom x radius',
+  1,
+  2,
+  0.01,
+  () =>
+    cameraTuningSettings
+      .surfaceZoomLimitMultiplier,
+  (value) => {
+    cameraTuningSettings
+      .surfaceZoomLimitMultiplier =
+      value
+  }
+)
+
+createNumberControl(
+  cameraSection,
+  'Tracked zoom factor',
+  1,
+  20,
+  0.25,
+  () =>
+    cameraTuningSettings
+      .trackedBodyZoomFactor,
+  (value) => {
+    cameraTuningSettings
+      .trackedBodyZoomFactor =
+      value
+  }
+)
+
+settingsPanel.append(
+  settingsHeader,
+  settingsTargetRow,
+  settingsActions,
+  iconSection,
+  gapSection,
+  globalOrbitSection,
+  cameraSection
+)
+
+orbitOverlayParent.append(
+  settingsButton,
+  settingsPanel
+)
+
+settingsButton.addEventListener(
+  'click',
+  () => {
+    settingsPanel.hidden =
+      !settingsPanel.hidden
+  }
+)
+
+settingsCloseButton.addEventListener(
+  'click',
+  () => {
+    settingsPanel.hidden =
+      true
+  }
+)
+
+settingsTargetSelect.addEventListener(
+  'change',
+  () => {
+    activeSettingsTarget =
+      getSettingsTargetById(
+        settingsTargetSelect.value
+      )
+
+    refreshSettingsControls()
+  }
+)
+
+settingsUseSelectedButton.addEventListener(
+  'click',
+  () => {
+    const info =
+      getBodyInfoForEntity(
+        viewer.selectedEntity ??
+          activeCameraTargetEntity
+      )
+
+    if (!info) {
+      return
+    }
+
+    const targetId =
+      `body:${info.name}`
+
+    activeSettingsTarget =
+      getSettingsTargetById(
+        targetId
+      )
+
+    settingsTargetSelect.value =
+      activeSettingsTarget.id
+
+    refreshSettingsControls()
+  }
+)
+
+settingsResetButton.addEventListener(
+  'click',
+  () => {
+    if (
+      activeSettingsTarget.bodyName
+    ) {
+      bodyTuningOverrides.delete(
+        activeSettingsTarget.bodyName
+      )
+    } else {
+      Object.assign(
+        bodyTuningSettings[
+          activeSettingsTarget.kind
+        ],
+        DEFAULT_BODY_TUNING_SETTINGS[
+          activeSettingsTarget.kind
+        ]
+      )
+    }
+
+    refreshSettingsControls()
+  }
+)
+
+
+// --------------------------------------------------
 // BODY TRACKING
 // --------------------------------------------------
 
@@ -2978,6 +3991,116 @@ function isEntityMoon(
   return moonRenderData.some(
     (renderData) =>
       renderData.entity === entity
+  )
+}
+
+function cloneBodyTuningSettings(
+  settings: BodyTuningSettings
+): BodyTuningSettings {
+  return {
+    ...settings,
+  }
+}
+
+function getBodyTuningSettings(
+  bodyName: string,
+  bodyKind: BodyKind
+) {
+  return (
+    bodyTuningOverrides.get(
+      bodyName
+    ) ??
+    bodyTuningSettings[
+      bodyKind
+    ]
+  )
+}
+
+function getBodyInfoForEntity(
+  entity:
+    | Entity
+    | undefined
+) {
+  if (!entity) {
+    return undefined
+  }
+
+  if (entity === sunEntity) {
+    return {
+      name: 'Sun',
+      kind:
+        'sun' as BodyKind,
+    }
+  }
+
+  const planet =
+    planetRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (planet) {
+    return {
+      name:
+        planet.planet.name,
+      kind:
+        'planet' as BodyKind,
+    }
+  }
+
+  const moon =
+    moonRenderData.find(
+      (renderData) =>
+        renderData.entity === entity
+    )
+
+  if (moon) {
+    return {
+      name:
+        moon.moon.name,
+      kind:
+        'moon' as BodyKind,
+    }
+  }
+
+  return undefined
+}
+
+function getBodyTuningForEntity(
+  entity:
+    | Entity
+    | undefined
+) {
+  const info =
+    getBodyInfoForEntity(
+      entity
+    )
+
+  if (!info) {
+    return undefined
+  }
+
+  return getBodyTuningSettings(
+    info.name,
+    info.kind
+  )
+}
+
+function getPlanetTuning(
+  renderData: PlanetRenderData
+) {
+  return getBodyTuningSettings(
+    renderData.planet.name,
+    'planet'
+  )
+}
+
+function getMoonTuning(
+  renderData: MoonRenderData
+) {
+  return getBodyTuningSettings(
+    renderData.moon.name,
+    'moon'
   )
 }
 
@@ -3188,7 +4311,8 @@ function updateCameraConstraintAxis(
       viewer.camera.position
     ) <=
       radius *
-        CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER
+        cameraTuningSettings
+          .constrainedAxisCloseupRangeMultiplier
   ) {
     viewer.camera.constrainedAxis =
       undefined
@@ -3358,11 +4482,13 @@ function updateCameraZoomRate() {
   )
 
   cameraController.zoomFactor =
-    TRACKED_BODY_ZOOM_FACTOR
+    cameraTuningSettings
+      .trackedBodyZoomFactor
 
   cameraController.minimumZoomDistance =
     radius *
-    SURFACE_ZOOM_LIMIT_MULTIPLIER
+    cameraTuningSettings
+      .surfaceZoomLimitMultiplier
 
   cameraController._minimumZoomRate =
     Math.max(
@@ -3954,7 +5080,8 @@ function createOrbitGap(
     )
 
   const iconRadius =
-    options.iconAlpha > 0.05
+    options.iconAlpha >
+    orbitTuningSettings.alphaGapThreshold
       ? options.iconPixels / 2
       : 0
 
@@ -4027,7 +5154,8 @@ function drawOrbitPath(
       canvasWidth,
       canvasHeight
     ) *
-    0.7
+    orbitTuningSettings
+      .maxSegmentLengthRatio
 
   context.strokeStyle =
     colour
@@ -4116,6 +5244,43 @@ function drawOrbitPath(
     1
 }
 
+function createBodyOrbitGap(
+  position: Cartesian3,
+  radius: number,
+  settings: BodyTuningSettings,
+  iconAlpha: number
+) {
+  return createOrbitGap(
+    position,
+    radius,
+    {
+      iconPixels:
+        settings.orbitGapIconPixels,
+      iconAlpha,
+      minRadius:
+        settings.orbitGapMinRadius,
+      maxRadius:
+        settings.orbitGapMaxRadius,
+      padding:
+        settings.orbitGapPadding,
+    }
+  )
+}
+
+function shouldHideOrbitForBody(
+  position: Cartesian3,
+  radius: number,
+  settings: BodyTuningSettings
+) {
+  return (
+    settings.orbitHidePixelDiameter > 0 &&
+    getPixelDiameter(
+      position,
+      radius
+    ) >= settings.orbitHidePixelDiameter
+  )
+}
+
 function drawOrbitOverlay() {
   const overlay =
     prepareOrbitOverlay()
@@ -4124,38 +5289,39 @@ function drawOrbitOverlay() {
     return
   }
 
-  const localBodyView =
-    isLocalBodyView()
+  const hidePlanetOrbits =
+    orbitTuningSettings
+      .hidePlanetOrbitsInTrackedLocalView &&
+    isTrackedBodyLocalView()
+
+  const sunSettings =
+    getBodyTuningSettings(
+      'Sun',
+      'sun'
+    )
 
   const sunGap =
-    createOrbitGap(
-    sunRenderPosition,
-    sun_rad,
-    {
-      iconPixels: 32,
-      iconAlpha:
-        sunBillboardState.alpha,
-      minRadius: 2,
-      maxRadius: 34,
-      padding: 5,
-    }
-  )
+    createBodyOrbitGap(
+      sunRenderPosition,
+      sun_rad,
+      sunSettings,
+      sunBillboardState.alpha
+    )
 
-  if (!localBodyView) {
+  if (!hidePlanetOrbits) {
     for (const renderData of planetRenderData) {
+      const planetSettings =
+        getPlanetTuning(
+          renderData
+        )
+
       const planetGap =
-        createOrbitGap(
-        renderData.currentPosition,
-        renderData.planet.radius,
-        {
-          iconPixels: 32,
-          iconAlpha:
-            renderData.billboardState.alpha,
-          minRadius: 2,
-          maxRadius: 34,
-          padding: 5,
-        }
-      )
+        createBodyOrbitGap(
+          renderData.currentPosition,
+          renderData.planet.radius,
+          planetSettings,
+          renderData.billboardState.alpha
+        )
 
       const gaps =
         [
@@ -4176,8 +5342,8 @@ function drawOrbitOverlay() {
           viewer.clock.currentTime
         ) as Cartesian3[] | undefined,
         renderData.planet.colour,
-        0.85,
-        1.5,
+        orbitTuningSettings.planetOrbitAlpha,
+        orbitTuningSettings.planetOrbitWidth,
         gaps,
         overlay.width,
         overlay.height
@@ -4206,17 +5372,13 @@ function drawOrbitOverlay() {
       }
 
       const parentGap =
-        createOrbitGap(
+        createBodyOrbitGap(
           parent.currentPosition,
           parent.planet.radius,
-          {
-            iconPixels: 32,
-            iconAlpha:
-              parent.billboardState.alpha,
-            minRadius: 2,
-            maxRadius: 46,
-            padding: 5,
-          }
+          getPlanetTuning(
+            parent
+          ),
+          parent.billboardState.alpha
         )
 
       const moonGaps =
@@ -4227,17 +5389,13 @@ function drawOrbitOverlay() {
           )
           .map(
             (renderData) =>
-              createOrbitGap(
+              createBodyOrbitGap(
                 renderData.currentPosition,
                 renderData.moon.radius,
-                {
-                  iconPixels: 20,
-                  iconAlpha:
-                    renderData.billboardState.alpha,
-                  minRadius: 3,
-                  maxRadius: 14,
-                  padding: 4,
-                }
+                getMoonTuning(
+                  renderData
+                ),
+                renderData.billboardState.alpha
               )
           )
 
@@ -4264,7 +5422,13 @@ function drawOrbitOverlay() {
 
   for (const renderData of moonRenderData) {
     if (
-      renderData.billboardState.hiddenBySize
+      shouldHideOrbitForBody(
+        renderData.currentPosition,
+        renderData.moon.radius,
+        getMoonTuning(
+          renderData
+        )
+      )
     ) {
       continue
     }
@@ -4280,8 +5444,8 @@ function drawOrbitOverlay() {
         viewer.clock.currentTime
       ) as Cartesian3[] | undefined,
       renderData.moon.colour,
-      0.7,
-      1,
+      orbitTuningSettings.moonOrbitAlpha,
+      orbitTuningSettings.moonOrbitWidth,
       gaps,
       overlay.width,
       overlay.height
@@ -4432,6 +5596,7 @@ function updateMoonBillboardFade(
   state: BillboardState,
   parentBillboardState: BillboardState,
   parentIconSuppressed: boolean,
+  settings: BodyTuningSettings,
   deltaSeconds: number
 ) {
   if (
@@ -4460,23 +5625,9 @@ function updateMoonBillboardFade(
     billboardColor,
     state,
     deltaSeconds,
-    MOON_ICON_FADE_OUT_PIXEL_DIAMETER,
-    MOON_ICON_FADE_IN_PIXEL_DIAMETER,
+    settings.iconFadeOutPixelDiameter,
+    settings.iconFadeInPixelDiameter,
     0.25
-  )
-}
-
-function isLocalBodyView() {
-  return (
-    sunBillboardState.hiddenBySize ||
-    planetRenderData.some(
-      (renderData) =>
-        renderData.billboardState.hiddenBySize
-    ) ||
-    moonRenderData.some(
-      (renderData) =>
-        renderData.billboardState.hiddenBySize
-    )
   )
 }
 
@@ -4509,7 +5660,13 @@ function isTrackedBodyLocalView() {
     getPixelDiameter(
       position,
       radius
-    ) >= LOCAL_BODY_VIEW_PIXEL_DIAMETER
+    ) >=
+    (
+      getBodyTuningForEntity(
+        trackedEntity
+      ) ??
+      bodyTuningSettings.planet
+    ).localViewPixelDiameter
   )
 }
 
@@ -4671,12 +5828,20 @@ viewer.scene.preUpdate.addEventListener(() => {
   // SUN
   // --------------------------------------------------
 
+  const sunSettings =
+    getBodyTuningSettings(
+      'Sun',
+      'sun'
+    )
+
   updateBillboardFade(
     sunRenderPosition,
     sun_rad,
     sunBillboardColor,
     sunBillboardState,
-    deltaSeconds
+    deltaSeconds,
+    sunSettings.iconFadeOutPixelDiameter,
+    sunSettings.iconFadeInPixelDiameter
   )
 
 
@@ -4685,12 +5850,19 @@ viewer.scene.preUpdate.addEventListener(() => {
   // --------------------------------------------------
 
   for (const renderData of planetRenderData) {
+    const planetSettings =
+      getPlanetTuning(
+        renderData
+      )
+
     updateBillboardFade(
       renderData.currentPosition,
       renderData.planet.radius,
       renderData.billboardColor,
       renderData.billboardState,
-      deltaSeconds
+      deltaSeconds,
+      planetSettings.iconFadeOutPixelDiameter,
+      planetSettings.iconFadeInPixelDiameter
     )
   }
 
@@ -4710,6 +5882,9 @@ viewer.scene.preUpdate.addEventListener(() => {
       renderData.billboardState,
       renderData.parent.billboardState,
       parentIconsSuppressed,
+      getMoonTuning(
+        renderData
+      ),
       deltaSeconds
     )
   }
