@@ -1500,6 +1500,11 @@ type OrbitGap = {
   radius: number
 }
 
+type SegmentInterval = {
+  start: number
+  end: number
+}
+
 type OrbitGapOptions = {
   iconPixels: number
   iconAlpha: number
@@ -3190,10 +3195,33 @@ settingsResetGlobalButton.type =
 settingsResetGlobalButton.textContent =
   'Reset global settings'
 
+const settingsCopyButton =
+  document.createElement(
+    'button'
+  )
+
+settingsCopyButton.type =
+  'button'
+settingsCopyButton.textContent =
+  'Copy settings dump'
+
 settingsActions.append(
   settingsUseSelectedButton,
   settingsResetButton,
-  settingsResetGlobalButton
+  settingsResetGlobalButton,
+  settingsCopyButton
+)
+
+const settingsCopyStatus =
+  document.createElement(
+    'div'
+  )
+
+settingsCopyStatus.className =
+  'solar-settings-status'
+settingsCopyStatus.setAttribute(
+  'aria-live',
+  'polite'
 )
 
 const settingsScopeNote =
@@ -3271,6 +3299,213 @@ function refreshSettingsControls() {
   for (const control of refreshableControls) {
     control.refresh()
   }
+}
+
+let settingsCopyStatusTimer:
+  number |
+  undefined
+
+function showSettingsCopyStatus(
+  text: string
+) {
+  settingsCopyStatus.textContent =
+    text
+
+  if (
+    settingsCopyStatusTimer !==
+    undefined
+  ) {
+    window.clearTimeout(
+      settingsCopyStatusTimer
+    )
+  }
+
+  settingsCopyStatusTimer =
+    window.setTimeout(
+      () => {
+        settingsCopyStatus.textContent =
+          ''
+        settingsCopyStatusTimer =
+          undefined
+      },
+      2500
+    )
+}
+
+function createSettingsDump() {
+  const bodyDefaults:
+    Record<
+      BodyKind,
+      BodyTuningSettings
+    > = {
+      sun:
+        cloneBodyTuningSettings(
+          bodyTuningSettings.sun
+        ),
+      planet:
+        cloneBodyTuningSettings(
+          bodyTuningSettings.planet
+        ),
+      moon:
+        cloneBodyTuningSettings(
+          bodyTuningSettings.moon
+        ),
+    }
+
+  const bodyOverrides =
+    Object.fromEntries(
+      Array
+        .from(
+          bodyTuningOverrides.entries()
+        )
+        .sort(
+          ([left], [right]) =>
+            left.localeCompare(
+              right
+            )
+        )
+        .map(
+          ([
+            bodyName,
+            settings,
+          ]) => [
+            bodyName,
+            cloneBodyTuningSettings(
+              settings
+            ),
+          ]
+        )
+    )
+
+  const resolvedBodies =
+    Object.fromEntries(
+      settingsTargets
+        .filter(
+          (target) =>
+            Boolean(
+              target.bodyName
+            )
+        )
+        .map(
+          (target) => {
+            const bodyName =
+              target.bodyName ??
+              target.label
+
+            return [
+              bodyName,
+              {
+                label:
+                  target.label,
+                kind:
+                  target.kind,
+                settings:
+                  cloneBodyTuningSettings(
+                    getBodyTuningSettings(
+                      bodyName,
+                      target.kind
+                    )
+                  ),
+              },
+            ]
+          }
+        )
+    )
+
+  return JSON.stringify(
+    {
+      version: 1,
+      activeTarget:
+        {
+          id:
+            activeSettingsTarget.id,
+          label:
+            activeSettingsTarget.label,
+          kind:
+            activeSettingsTarget.kind,
+          bodyName:
+            activeSettingsTarget.bodyName,
+        },
+      bodyDefaults,
+      bodyOverrides,
+      resolvedBodies,
+      globalOrbit:
+        {
+          ...orbitTuningSettings,
+        },
+      globalCamera:
+        {
+          ...cameraTuningSettings,
+        },
+    },
+    null,
+    2
+  )
+}
+
+function fallbackCopyTextToClipboard(
+  text: string
+) {
+  const textarea =
+    document.createElement(
+      'textarea'
+    )
+
+  textarea.value =
+    text
+  textarea.setAttribute(
+    'readonly',
+    'true'
+  )
+  textarea.style.position =
+    'fixed'
+  textarea.style.left =
+    '-9999px'
+  textarea.style.top =
+    '0'
+
+  document.body.appendChild(
+    textarea
+  )
+  textarea.select()
+
+  const copied =
+    document.execCommand(
+      'copy'
+    )
+
+  textarea.remove()
+
+  if (!copied) {
+    throw new Error(
+      'Copy command was not available.'
+    )
+  }
+}
+
+async function copyTextToClipboard(
+  text: string
+) {
+  if (
+    navigator.clipboard &&
+    navigator.clipboard.writeText
+  ) {
+    try {
+      await navigator
+        .clipboard
+        .writeText(
+          text
+        )
+      return
+    } catch {
+      // Fall back for browsers that expose the API
+      // but deny writes outside their preferred path.
+    }
+  }
+
+  fallbackCopyTextToClipboard(
+    text
+  )
 }
 
 function createSettingsSection(
@@ -3933,6 +4168,7 @@ settingsPanel.append(
   settingsHeader,
   settingsTargetRow,
   settingsActions,
+  settingsCopyStatus,
   settingsScopeNote,
   iconSection,
   gapSection,
@@ -4039,6 +4275,29 @@ settingsResetGlobalButton.addEventListener(
     )
 
     refreshSettingsControls()
+  }
+)
+
+settingsCopyButton.addEventListener(
+  'click',
+  () => {
+    copyTextToClipboard(
+      createSettingsDump()
+    )
+      .then(
+        () => {
+          showSettingsCopyStatus(
+            'Copied settings dump'
+          )
+        }
+      )
+      .catch(
+        () => {
+          showSettingsCopyStatus(
+            'Copy failed'
+          )
+        }
+      )
   }
 )
 
@@ -5346,16 +5605,248 @@ function createOrbitGap(
   }
 }
 
-function pointIsInOrbitGap(
-  point: Cartesian2,
+function getSegmentGapInterval(
+  start: Cartesian2,
+  end: Cartesian2,
+  gap: OrbitGap
+): SegmentInterval | undefined {
+  const dx =
+    end.x - start.x
+
+  const dy =
+    end.y - start.y
+
+  const a =
+    dx * dx +
+    dy * dy
+
+  if (a <= 0) {
+    return undefined
+  }
+
+  const startX =
+    start.x - gap.centre.x
+
+  const startY =
+    start.y - gap.centre.y
+
+  const endX =
+    end.x - gap.centre.x
+
+  const endY =
+    end.y - gap.centre.y
+
+  const radiusSquared =
+    gap.radius * gap.radius
+
+  const startInside =
+    (
+      startX * startX +
+      startY * startY
+    ) <= radiusSquared
+
+  const endInside =
+    (
+      endX * endX +
+      endY * endY
+    ) <= radiusSquared
+
+  const b =
+    2 *
+    (
+      startX * dx +
+      startY * dy
+    )
+
+  const c =
+    (
+      startX * startX +
+      startY * startY
+    ) -
+    radiusSquared
+
+  const discriminant =
+    b * b -
+    4 * a * c
+
+  if (discriminant < 0) {
+    return startInside || endInside
+      ? {
+        start: 0,
+        end: 1,
+      }
+      : undefined
+  }
+
+  const root =
+    Math.sqrt(
+      discriminant
+    )
+
+  const first =
+    (
+      -b -
+      root
+    ) /
+    (
+      2 * a
+    )
+
+  const second =
+    (
+      -b +
+      root
+    ) /
+    (
+      2 * a
+    )
+
+  if (
+    second < 0 ||
+    first > 1
+  ) {
+    return startInside && endInside
+      ? {
+        start: 0,
+        end: 1,
+      }
+      : undefined
+  }
+
+  const intervalStart =
+    Math.max(
+      0,
+      first
+    )
+
+  const intervalEnd =
+    Math.min(
+      1,
+      second
+    )
+
+  if (
+    intervalEnd <=
+    intervalStart
+  ) {
+    return undefined
+  }
+
+  return {
+    start:
+      intervalStart,
+    end:
+      intervalEnd,
+  }
+}
+
+function getVisibleSegmentIntervals(
+  start: Cartesian2,
+  end: Cartesian2,
   gaps: OrbitGap[]
 ) {
-  return gaps.some(
-    (gap) =>
-      Cartesian2.distance(
-        point,
-        gap.centre
-      ) <= gap.radius
+  if (gaps.length === 0) {
+    return [
+      {
+        start: 0,
+        end: 1,
+      },
+    ]
+  }
+
+  const gapIntervals =
+    gaps
+      .map(
+        (gap) =>
+          getSegmentGapInterval(
+            start,
+            end,
+            gap
+          )
+      )
+      .filter(
+        (
+          interval
+        ): interval is SegmentInterval =>
+          Boolean(
+            interval
+          )
+      )
+      .sort(
+        (
+          left,
+          right
+        ) =>
+          left.start -
+          right.start
+      )
+
+  if (gapIntervals.length === 0) {
+    return [
+      {
+        start: 0,
+        end: 1,
+      },
+    ]
+  }
+
+  const visibleIntervals:
+    SegmentInterval[] = []
+
+  let visibleStart =
+    0
+
+  for (const interval of gapIntervals) {
+    if (
+      interval.start >
+      visibleStart
+    ) {
+      visibleIntervals.push({
+        start:
+          visibleStart,
+        end:
+          interval.start,
+      })
+    }
+
+    visibleStart =
+      Math.max(
+        visibleStart,
+        interval.end
+      )
+
+    if (visibleStart >= 1) {
+      break
+    }
+  }
+
+  if (visibleStart < 1) {
+    visibleIntervals.push({
+      start:
+        visibleStart,
+      end: 1,
+    })
+  }
+
+  return visibleIntervals
+}
+
+function interpolateScreenPoint(
+  start: Cartesian2,
+  end: Cartesian2,
+  amount: number
+) {
+  return new Cartesian2(
+    start.x +
+    (
+      end.x - start.x
+    ) *
+    amount,
+    start.y +
+    (
+      end.y - start.y
+    ) *
+    amount
   )
 }
 
@@ -5402,70 +5893,122 @@ function drawOrbitPath(
     Cartesian2 |
     undefined
 
+  const finishStroke =
+    () => {
+      if (drawing) {
+        context.stroke()
+        drawing =
+          false
+      }
+    }
+
   for (const position of positions) {
     const point =
       getScreenPosition(
         position
       )
 
-    const hidden =
-      !point ||
-      pointIsInOrbitGap(
-        point,
-        gaps
-      )
-
-    if (hidden) {
-      if (drawing) {
-        context.stroke()
-      }
-
-      drawing =
-        false
+    if (!point) {
+      finishStroke()
       previousPoint =
         undefined
       continue
     }
 
+    if (!previousPoint) {
+      previousPoint =
+        point
+      continue
+    }
+
     if (
-      previousPoint &&
       Cartesian2.distance(
         point,
         previousPoint
       ) > maxSegmentLength
     ) {
-      if (drawing) {
-        context.stroke()
-      }
-
-      drawing =
-        false
+      finishStroke()
+      previousPoint =
+        point
+      continue
     }
 
-    if (!drawing) {
-      context.beginPath()
-      context.moveTo(
-        point.x,
-        point.y
+    const visibleIntervals =
+      getVisibleSegmentIntervals(
+        previousPoint,
+        point,
+        gaps
       )
-      drawing =
-        true
-    } else {
+
+    if (
+      visibleIntervals.length === 0
+    ) {
+      finishStroke()
+      previousPoint =
+        point
+      continue
+    }
+
+    for (
+      let index = 0;
+      index < visibleIntervals.length;
+      index++
+    ) {
+      const interval =
+        visibleIntervals[index]
+
+      if (
+        interval.end <=
+        interval.start
+      ) {
+        continue
+      }
+
+      if (
+        !drawing ||
+        interval.start > 0 ||
+        index > 0
+      ) {
+        finishStroke()
+
+        const startPoint =
+          interpolateScreenPoint(
+            previousPoint,
+            point,
+            interval.start
+          )
+
+        context.beginPath()
+        context.moveTo(
+          startPoint.x,
+          startPoint.y
+        )
+        drawing =
+          true
+      }
+
+      const endPoint =
+        interpolateScreenPoint(
+          previousPoint,
+          point,
+          interval.end
+        )
+
       context.lineTo(
-        point.x,
-        point.y
+        endPoint.x,
+        endPoint.y
       )
+
+      if (interval.end < 1) {
+        finishStroke()
+      }
     }
 
     previousPoint =
-      Cartesian2.clone(
-        point
-      )
+      point
   }
 
-  if (drawing) {
-    context.stroke()
-  }
+  finishStroke()
 
   context.globalAlpha =
     1

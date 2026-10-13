@@ -106,6 +106,13 @@ body,
   font-size: 12px;
 }
 
+.solar-settings-status {
+  min-height: 16px;
+  margin-top: 6px;
+  color: #9fc5ff;
+  font-size: 12px;
+}
+
 .solar-settings-section {
   margin-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
