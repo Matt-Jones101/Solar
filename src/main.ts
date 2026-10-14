@@ -1490,6 +1490,16 @@ type MoonData = {
   retrograde?: boolean
 }
 
+type BodyTexture =
+  | HTMLCanvasElement
+  | string
+
+type EarthTextureTier = {
+  image: string
+  minimumPixelDiameter: number
+  downgradePixelDiameter: number
+}
+
 type BillboardState = {
   alpha: number
   visible: boolean
@@ -2994,8 +3004,46 @@ function createStylizedMoonTexture() {
   return canvas
 }
 
-const earthSurfaceTexture =
+const earthTextureTiers: EarthTextureTier[] = [
+  {
+    image:
+      '/textures/earth-natural-2048.jpg',
+    minimumPixelDiameter: 0,
+    downgradePixelDiameter: 0,
+  },
+
+  {
+    image:
+      '/textures/earth-natural-4096.jpg',
+    minimumPixelDiameter: 220,
+    downgradePixelDiameter: 160,
+  },
+
+  {
+    image:
+      '/textures/earth-natural-8192.jpg',
+    minimumPixelDiameter: 520,
+    downgradePixelDiameter: 420,
+  },
+]
+
+let activeEarthTextureTierIndex =
+  earthTextureTiers.length - 1
+
+const initialEarthSurfaceTexture:
+  BodyTexture =
+  earthTextureTiers[
+    activeEarthTextureTierIndex
+  ]?.image ??
   createStylizedEarthTexture()
+
+for (const tier of earthTextureTiers) {
+  const image =
+    new Image()
+
+  image.src =
+    tier.image
+}
 
 const moonSurfaceTexture =
   createStylizedMoonTexture()
@@ -3006,7 +3054,7 @@ function createBodyPrimitive(
   colour: string,
   position: Cartesian3,
   texture:
-    | HTMLCanvasElement
+    | BodyTexture
     | undefined =
     undefined
 ) {
@@ -3111,6 +3159,26 @@ function updateBodyPrimitivePosition(
     position,
     primitive.modelMatrix
   )
+}
+
+function setBodyPrimitiveTexture(
+  primitive: Primitive,
+  texture: BodyTexture
+) {
+  const appearance =
+    primitive.appearance as
+      | MaterialAppearance
+      | undefined
+
+  const material =
+    appearance?.material
+
+  if (!material?.uniforms) {
+    return
+  }
+
+  material.uniforms.image =
+    texture
 }
 
 
@@ -3343,7 +3411,7 @@ for (const planet of planets) {
       planet.colour,
       initialPosition,
       planet.name === 'Earth'
-        ? earthSurfaceTexture
+        ? initialEarthSurfaceTexture
         : undefined
     )
 
@@ -3370,6 +3438,13 @@ for (const planet of planets) {
     orbitPositions,
   })
 }
+
+const earthRenderData =
+  planetRenderData.find(
+    (renderData) =>
+      renderData.planet.name ===
+        'Earth'
+  )
 
 const moonRenderData: MoonRenderData[] = []
 
@@ -5855,6 +5930,123 @@ function trackBody(
   updateCameraZoomRate()
 }
 
+function getWholeBodyCameraRange(
+  radius: number
+) {
+  const frustum =
+    viewer.camera.frustum
+
+  const fovy =
+    'fovy' in frustum &&
+    typeof frustum.fovy ===
+      'number'
+      ? frustum.fovy
+      : Math.PI / 3
+
+  return (
+    radius /
+    Math.sin(
+      fovy / 2
+    ) *
+    1.42
+  )
+}
+
+function frameBodyAtRange(
+  entity: Entity,
+  range: number,
+  directionWC: Cartesian3
+) {
+  const physicalPosition =
+    getEntityPhysicalPosition(
+      entity
+    )
+
+  if (!physicalPosition) {
+    return false
+  }
+
+  clearNativeTrackedEntity()
+
+  viewer.selectedEntity =
+    undefined
+
+  const normalisedDirectionWC =
+    Cartesian3.normalize(
+      directionWC,
+      new Cartesian3()
+    )
+
+  const constraintAxisWC =
+    getCameraConstraintAxisWorld(
+      entity
+    )
+
+  const upWC =
+    getConstraintAlignedUp(
+      normalisedDirectionWC,
+      constraintAxisWC,
+      Cartesian3.UNIT_Z
+    )
+
+  activeCameraTargetEntity =
+    entity
+
+  setRenderOrigin(
+    physicalPosition
+  )
+
+  updateRenderedBodyPositions(
+    viewer.clock.currentTime,
+    false
+  )
+
+  refreshEntityDisplayNow(
+    viewer.clock.currentTime
+  )
+
+  const position =
+    getEntityPosition(
+      entity
+    )
+
+  if (!position) {
+    return false
+  }
+
+  const destination =
+    Cartesian3.subtract(
+      position,
+      Cartesian3.multiplyByScalar(
+        normalisedDirectionWC,
+        range,
+        new Cartesian3()
+      ),
+      new Cartesian3()
+    )
+
+  cameraCentrePosition =
+    Cartesian3.clone(
+      position,
+      cameraCentrePosition
+    )
+
+  setCameraWorldStateForCentre(
+    cameraCentrePosition,
+    destination,
+    normalisedDirectionWC,
+    upWC
+  )
+
+  updateCameraConstraintAxis(
+    entity
+  )
+
+  updateCameraZoomRate()
+
+  return true
+}
+
 viewer
   .trackedEntityChanged
   .addEventListener(
@@ -6879,6 +7071,72 @@ function getPixelDiameter(
   )
 }
 
+function getEarthTextureTierIndex(
+  pixelDiameter: number
+) {
+  let tierIndex =
+    activeEarthTextureTierIndex
+
+  while (
+    tierIndex <
+      earthTextureTiers.length - 1 &&
+    pixelDiameter >=
+      earthTextureTiers[
+        tierIndex + 1
+      ].minimumPixelDiameter
+  ) {
+    tierIndex += 1
+  }
+
+  while (
+    tierIndex > 0 &&
+    pixelDiameter <
+      earthTextureTiers[
+        tierIndex
+      ].downgradePixelDiameter
+  ) {
+    tierIndex -= 1
+  }
+
+  return tierIndex
+}
+
+function updateEarthTextureTier() {
+  if (!earthRenderData) {
+    return
+  }
+
+  const pixelDiameter =
+    getPixelDiameter(
+      earthRenderData.currentPosition,
+      earthRenderData.planet.radius
+    )
+
+  const tierIndex =
+    getEarthTextureTierIndex(
+      pixelDiameter
+    )
+
+  if (
+    tierIndex ===
+    activeEarthTextureTierIndex
+  ) {
+    return
+  }
+
+  activeEarthTextureTierIndex =
+    tierIndex
+
+  setBodyPrimitiveTexture(
+    earthRenderData.bodyPrimitive,
+    earthTextureTiers[
+      activeEarthTextureTierIndex
+    ].image
+  )
+
+  viewer.scene.requestRender()
+}
+
 function updateBillboardFade(
   position: Cartesian3,
   radius: number,
@@ -7213,6 +7471,8 @@ viewer.scene.preUpdate.addEventListener(() => {
 
   updateCameraZoomRate()
 
+  updateEarthTextureTier()
+
 
   // --------------------------------------------------
   // SUN
@@ -7298,12 +7558,37 @@ viewer.scene.postRender.addEventListener(
 // INITIAL CAMERA
 // --------------------------------------------------
 
-viewer.camera.lookAt(
-  sun_pos,
-
-  new HeadingPitchRange(
-    0,
-    -0.45,
-    AU * 90
+const initialEarthCameraDirection =
+  Cartesian3.normalize(
+    new Cartesian3(
+      -0.82,
+      -0.34,
+      -0.46
+    ),
+    new Cartesian3()
   )
-)
+
+const openedOnEarth =
+  earthRenderData
+    ? frameBodyAtRange(
+        earthRenderData.entity,
+        getWholeBodyCameraRange(
+          earthRenderData.planet.radius
+        ),
+        initialEarthCameraDirection
+      )
+    : false
+
+if (openedOnEarth) {
+  updateEarthTextureTier()
+} else {
+  viewer.camera.lookAt(
+    sun_pos,
+
+    new HeadingPitchRange(
+      0,
+      -0.45,
+      AU * 90
+    )
+  )
+}
