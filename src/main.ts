@@ -15,6 +15,8 @@ import {
   GeometryInstance,
   HeadingPitchRange,
   JulianDate,
+  Material,
+  MaterialAppearance,
   Matrix3,
   Matrix4,
   PerInstanceColorAppearance,
@@ -2482,12 +2484,541 @@ function makeCircleIcon(
   )
 }
 
+function createTextureCanvas(
+  width: number,
+  height: number
+) {
+  const canvas =
+    document.createElement(
+      'canvas'
+    )
+
+  canvas.width =
+    width
+  canvas.height =
+    height
+
+  return canvas
+}
+
+function textureX(
+  longitude: number,
+  width: number
+) {
+  return (
+    (
+      longitude + 180
+    ) /
+    360
+  ) *
+  width
+}
+
+function textureY(
+  latitude: number,
+  height: number
+) {
+  return (
+    (
+      90 -
+      latitude
+    ) /
+    180
+  ) *
+  height
+}
+
+function drawLonLatPolygon(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  points: Array<[
+    longitude: number,
+    latitude: number,
+  ]>,
+  fill: string,
+  stroke: string
+) {
+  if (points.length === 0) {
+    return
+  }
+
+  context.beginPath()
+
+  points.forEach(
+    (
+      [
+        longitude,
+        latitude,
+      ],
+      index
+    ) => {
+      const x =
+        textureX(
+          longitude,
+          width
+        )
+
+      const y =
+        textureY(
+          latitude,
+          height
+        )
+
+      if (index === 0) {
+        context.moveTo(
+          x,
+          y
+        )
+      } else {
+        context.lineTo(
+          x,
+          y
+        )
+      }
+    }
+  )
+
+  context.closePath()
+  context.fillStyle =
+    fill
+  context.fill()
+  context.strokeStyle =
+    stroke
+  context.lineWidth =
+    3
+  context.stroke()
+}
+
+function drawLonLatEllipse(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  longitude: number,
+  latitude: number,
+  radiusLongitude: number,
+  radiusLatitude: number,
+  fill: string,
+  stroke?: string
+) {
+  context.beginPath()
+  context.ellipse(
+    textureX(
+      longitude,
+      width
+    ),
+    textureY(
+      latitude,
+      height
+    ),
+    (
+      radiusLongitude /
+      360
+    ) *
+    width,
+    (
+      radiusLatitude /
+      180
+    ) *
+    height,
+    0,
+    0,
+    Math.PI * 2
+  )
+  context.fillStyle =
+    fill
+  context.fill()
+
+  if (stroke) {
+    context.strokeStyle =
+      stroke
+    context.lineWidth =
+      2
+    context.stroke()
+  }
+}
+
+function createStylizedEarthTexture() {
+  const width =
+    1024
+  const height =
+    512
+
+  const canvas =
+    createTextureCanvas(
+      width,
+      height
+    )
+
+  const context =
+    canvas.getContext(
+      '2d'
+    )
+
+  if (!context) {
+    return canvas
+  }
+
+  const ocean =
+    context.createLinearGradient(
+      0,
+      0,
+      0,
+      height
+    )
+
+  ocean.addColorStop(
+    0,
+    '#2b67b7'
+  )
+  ocean.addColorStop(
+    0.5,
+    '#1f83c7'
+  )
+  ocean.addColorStop(
+    1,
+    '#174b90'
+  )
+
+  context.fillStyle =
+    ocean
+  context.fillRect(
+    0,
+    0,
+    width,
+    height
+  )
+
+  context.fillStyle =
+    'rgba(255, 255, 255, 0.08)'
+
+  for (
+    let latitude = -60;
+    latitude <= 60;
+    latitude += 30
+  ) {
+    const y =
+      textureY(
+        latitude,
+        height
+      )
+
+    context.fillRect(
+      0,
+      y - 1,
+      width,
+      2
+    )
+  }
+
+  const land =
+    '#74a96a'
+  const landDark =
+    '#4f7f55'
+
+  drawLonLatPolygon(
+    context,
+    width,
+    height,
+    [
+      [-168, 70],
+      [-135, 72],
+      [-100, 58],
+      [-68, 47],
+      [-54, 25],
+      [-80, 8],
+      [-105, 14],
+      [-125, 32],
+      [-150, 48],
+    ],
+    land,
+    landDark
+  )
+
+  drawLonLatPolygon(
+    context,
+    width,
+    height,
+    [
+      [-82, 12],
+      [-52, 2],
+      [-38, -22],
+      [-54, -56],
+      [-73, -48],
+      [-80, -18],
+      [-88, 2],
+    ],
+    '#77b56f',
+    landDark
+  )
+
+  drawLonLatPolygon(
+    context,
+    width,
+    height,
+    [
+      [-55, 76],
+      [-28, 72],
+      [-18, 58],
+      [-42, 52],
+      [-62, 62],
+    ],
+    '#d8e6d6',
+    '#a9beb0'
+  )
+
+  drawLonLatPolygon(
+    context,
+    width,
+    height,
+    [
+      [-12, 36],
+      [8, 58],
+      [52, 60],
+      [104, 52],
+      [150, 62],
+      [172, 48],
+      [126, 18],
+      [74, 6],
+      [48, 22],
+      [26, 30],
+      [8, 34],
+    ],
+    '#85b86d',
+    landDark
+  )
+
+  drawLonLatPolygon(
+    context,
+    width,
+    height,
+    [
+      [-18, 34],
+      [14, 30],
+      [34, 8],
+      [30, -30],
+      [12, -36],
+      [-8, -8],
+      [-20, 18],
+    ],
+    '#b3a160',
+    '#746b43'
+  )
+
+  drawLonLatPolygon(
+    context,
+    width,
+    height,
+    [
+      [110, -12],
+      [152, -18],
+      [154, -39],
+      [126, -45],
+      [112, -28],
+    ],
+    '#b69a62',
+    '#776845'
+  )
+
+  drawLonLatPolygon(
+    context,
+    width,
+    height,
+    [
+      [-180, -72],
+      [-100, -66],
+      [-20, -70],
+      [60, -66],
+      [180, -74],
+      [180, -90],
+      [-180, -90],
+    ],
+    '#d8e2de',
+    '#a9b8b5'
+  )
+
+  context.fillStyle =
+    'rgba(255, 255, 255, 0.18)'
+
+  for (const cloud of [
+    [-150, 26, 28, 7],
+    [-24, -4, 34, 8],
+    [62, 48, 42, 7],
+    [146, -26, 30, 6],
+  ] as Array<[
+    number,
+    number,
+    number,
+    number,
+  ]>) {
+    drawLonLatEllipse(
+      context,
+      width,
+      height,
+      cloud[0],
+      cloud[1],
+      cloud[2],
+      cloud[3],
+      'rgba(255, 255, 255, 0.18)'
+    )
+  }
+
+  return canvas
+}
+
+function createStylizedMoonTexture() {
+  const width =
+    1024
+  const height =
+    512
+
+  const canvas =
+    createTextureCanvas(
+      width,
+      height
+    )
+
+  const context =
+    canvas.getContext(
+      '2d'
+    )
+
+  if (!context) {
+    return canvas
+  }
+
+  const surface =
+    context.createLinearGradient(
+      0,
+      0,
+      width,
+      height
+    )
+
+  surface.addColorStop(
+    0,
+    '#d9d7ce'
+  )
+  surface.addColorStop(
+    0.48,
+    '#aaa79d'
+  )
+  surface.addColorStop(
+    1,
+    '#ebe7dc'
+  )
+
+  context.fillStyle =
+    surface
+  context.fillRect(
+    0,
+    0,
+    width,
+    height
+  )
+
+  for (const mare of [
+    [-18, 18, 28, 14],
+    [22, 8, 22, 11],
+    [58, 24, 18, 9],
+    [-54, -18, 18, 10],
+  ] as Array<[
+    number,
+    number,
+    number,
+    number,
+  ]>) {
+    drawLonLatEllipse(
+      context,
+      width,
+      height,
+      mare[0],
+      mare[1],
+      mare[2],
+      mare[3],
+      'rgba(112, 111, 106, 0.38)'
+    )
+  }
+
+  for (const crater of [
+    [-112, 42, 9],
+    [-72, 10, 12],
+    [-36, -34, 7],
+    [4, 36, 8],
+    [40, -18, 10],
+    [92, 18, 7],
+    [128, -38, 11],
+    [152, 46, 6],
+  ] as Array<[
+    number,
+    number,
+    number,
+  ]>) {
+    drawLonLatEllipse(
+      context,
+      width,
+      height,
+      crater[0],
+      crater[1],
+      crater[2],
+      crater[2] * 0.55,
+      'rgba(70, 70, 66, 0.22)',
+      'rgba(245, 242, 232, 0.42)'
+    )
+  }
+
+  context.fillStyle =
+    'rgba(255, 255, 255, 0.1)'
+
+  for (
+    let x = 0;
+    x < width;
+    x += 24
+  ) {
+    for (
+      let y = (
+        x % 48
+      );
+      y < height;
+      y += 48
+    ) {
+      context.fillRect(
+        x,
+        y,
+        2,
+        2
+      )
+    }
+  }
+
+  return canvas
+}
+
+const earthSurfaceTexture =
+  createStylizedEarthTexture()
+
+const moonSurfaceTexture =
+  createStylizedMoonTexture()
+
 function createBodyPrimitive(
   entity: Entity,
   radius: number,
   colour: string,
-  position: Cartesian3
+  position: Cartesian3,
+  texture:
+    | HTMLCanvasElement
+    | undefined =
+    undefined
 ) {
+  const vertexFormat =
+    texture
+      ? MaterialAppearance
+        .MaterialSupport
+        .TEXTURED
+        .vertexFormat
+      : PerInstanceColorAppearance
+        .VERTEX_FORMAT
+
   return viewer.scene.primitives.add(
     new Primitive({
       geometryInstances:
@@ -2511,26 +3042,52 @@ function createBodyPrimitive(
                 BODY_SLICE_PARTITIONS,
 
               vertexFormat:
-                PerInstanceColorAppearance
-                  .VERTEX_FORMAT,
+                vertexFormat,
             }),
 
-          attributes: {
-            color:
-              ColorGeometryInstanceAttribute
-                .fromColor(
-                  Color.fromCssColorString(
-                    colour
-                  )
-                ),
-          },
+          attributes:
+            texture
+              ? undefined
+              : {
+                color:
+                  ColorGeometryInstanceAttribute
+                    .fromColor(
+                      Color.fromCssColorString(
+                        colour
+                      )
+                    ),
+              },
         }),
 
       appearance:
-        new PerInstanceColorAppearance({
-          closed: true,
-          translucent: false,
-        }),
+        texture
+          ? new MaterialAppearance({
+            closed: true,
+            translucent: false,
+            materialSupport:
+              MaterialAppearance
+                .MaterialSupport
+                .TEXTURED,
+            material:
+              Material.fromType(
+                Material.ImageType,
+                {
+                  image:
+                    texture,
+                  repeat:
+                    new Cartesian2(
+                      1,
+                      1
+                    ),
+                  color:
+                    Color.WHITE,
+                }
+              ),
+          })
+          : new PerInstanceColorAppearance({
+            closed: true,
+            translucent: false,
+          }),
 
       asynchronous:
         false,
@@ -2784,7 +3341,10 @@ for (const planet of planets) {
       planetEntity,
       planet.radius,
       planet.colour,
-      initialPosition
+      initialPosition,
+      planet.name === 'Earth'
+        ? earthSurfaceTexture
+        : undefined
     )
 
   trackableBodies.add(
@@ -2953,7 +3513,10 @@ for (const moon of majorMoons) {
       moonEntity,
       moon.radius,
       moon.colour,
-      initialPosition
+      initialPosition,
+      moon.name === 'Moon'
+        ? moonSurfaceTexture
+        : undefined
     )
 
   trackableBodies.add(
@@ -6504,6 +7067,32 @@ function hideAllBillboardsForLocalBodyView(
       renderData.billboardState,
       deltaSeconds
     )
+  }
+
+  const activePlanet =
+    planetRenderData.find(
+      (renderData) =>
+        renderData.entity ===
+        activeCameraTargetEntity
+    )
+
+  if (activePlanet) {
+    for (const renderData of moonRenderData) {
+      if (
+        renderData.parent ===
+        activePlanet
+      ) {
+        continue
+      }
+
+      hideBillboardForLocalBodyView(
+        renderData.billboardColor,
+        renderData.billboardState,
+        deltaSeconds
+      )
+    }
+
+    return
   }
 
   if (
