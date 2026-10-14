@@ -111,7 +111,7 @@ const TRACKED_BODY_ZOOM_FACTOR = 8
 
 const SURFACE_ZOOM_LIMIT_MULTIPLIER = 1.04
 
-const CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER = 6
+const CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER = 0
 
 const orbitOverlayCanvas =
   document.createElement('canvas')
@@ -4203,6 +4203,10 @@ function configureSettingLabel(
     0
 }
 
+type NumberControlOptions = {
+  clamp?: boolean
+}
+
 function createNumberControl(
   section: HTMLElement,
   labelText: string,
@@ -4211,8 +4215,12 @@ function createNumberControl(
   max: number,
   step: number,
   getValue: () => number,
-  setValue: (value: number) => void
+  setValue: (value: number) => void,
+  options: NumberControlOptions = {}
 ) {
+  const clamp =
+    options.clamp ?? true
+
   const row =
     document.createElement(
       'label'
@@ -4262,12 +4270,15 @@ function createNumberControl(
 
   number.type =
     'number'
-  number.min =
-    min.toString()
-  number.max =
-    max.toString()
   number.step =
     step.toString()
+
+  if (clamp) {
+    number.min =
+      min.toString()
+    number.max =
+      max.toString()
+  }
 
   const setInputs =
     (value: number) => {
@@ -4290,20 +4301,22 @@ function createNumberControl(
         return
       }
 
-      const clamped =
-        Math.min(
-          max,
-          Math.max(
-            min,
-            value
-          )
-        )
+      const nextValue =
+        clamp
+          ? Math.min(
+              max,
+              Math.max(
+                min,
+                value
+              )
+            )
+          : value
 
       setValue(
-        clamped
+        nextValue
       )
       setInputs(
-        clamped
+        nextValue
       )
     }
 
@@ -4757,8 +4770,8 @@ const cameraSection =
 createNumberControl(
   cameraSection,
   'Axis close-up x radius',
-  'How close the camera must be, measured in body radii, before constrained orbiting relaxes.',
-  1,
+  'When positive, turns off orbital-plane constrained orbiting once the camera is within this many body radii of the camera centre. Set 0 or less to keep the constraint active all the way in.',
+  0,
   30,
   0.25,
   () =>
@@ -4768,14 +4781,17 @@ createNumberControl(
     cameraTuningSettings
       .constrainedAxisCloseupRangeMultiplier =
       value
+  },
+  {
+    clamp: false,
   }
 )
 
 createNumberControl(
   cameraSection,
   'Surface zoom x radius',
-  'Minimum camera distance from the active body centre, measured as a multiple of its radius.',
-  1,
+  'Minimum camera distance from the active body centre, measured in body radii. 1 is the surface, 1.04 sits just above it, 0.5 allows halfway into the rendered sphere, and 0 or less removes the distance floor.',
+  0,
   2,
   0.01,
   () =>
@@ -4785,14 +4801,17 @@ createNumberControl(
     cameraTuningSettings
       .surfaceZoomLimitMultiplier =
       value
+  },
+  {
+    clamp: false,
   }
 )
 
 createNumberControl(
   cameraSection,
   'Tracked zoom factor',
-  'Cesium zoom speed multiplier while orbiting a selected body.',
-  1,
+  'Mouse-wheel and pinch zoom sensitivity while a body is the camera centre. Bigger values move faster per scroll; smaller values are finer control. This does not set the closest or farthest allowed distance.',
+  0,
   20,
   0.25,
   () =>
@@ -4802,6 +4821,9 @@ createNumberControl(
     cameraTuningSettings
       .trackedBodyZoomFactor =
       value
+  },
+  {
+    clamp: false,
   }
 )
 
@@ -5434,6 +5456,8 @@ function updateCameraConstraintAxis(
   if (
     entity &&
     radius &&
+    cameraTuningSettings
+      .constrainedAxisCloseupRangeMultiplier > 0 &&
     Cartesian3.magnitude(
       viewer.camera.position
     ) <=
@@ -5526,28 +5550,16 @@ function updateCameraControllerEllipsoid(
     activeControllerEllipsoid
 
   const minimumPickingTerrainHeight =
-    Math.max(
-      radius * 0.025,
-      1
-    )
+    0
 
   const minimumPickingTerrainDistanceWithInertia =
-    Math.max(
-      radius * 0.00063,
-      1
-    )
+    0
 
   const minimumCollisionTerrainHeight =
-    Math.max(
-      radius * 0.0025,
-      1
-    )
+    0
 
   const minimumTrackBallHeight =
-    Math.max(
-      radius * 1.175,
-      1
-    )
+    0
 
   cameraController.minimumPickingTerrainHeight =
     minimumPickingTerrainHeight
@@ -5613,9 +5625,12 @@ function updateCameraZoomRate() {
       .trackedBodyZoomFactor
 
   cameraController.minimumZoomDistance =
-    radius *
-    cameraTuningSettings
-      .surfaceZoomLimitMultiplier
+    Math.max(
+      0,
+      radius *
+        cameraTuningSettings
+          .surfaceZoomLimitMultiplier
+    )
 
   cameraController._minimumZoomRate =
     Math.max(
