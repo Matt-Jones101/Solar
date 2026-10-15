@@ -11,7 +11,7 @@ body,
 .solar-settings-button,
 .solar-info-button {
   position: absolute;
-  top: 50px;
+  top: 10px;
   z-index: 3;
   border: 1px solid rgba(255, 255, 255, 0.35);
   background: rgba(22, 26, 32, 0.9);
@@ -26,7 +26,11 @@ body,
 }
 
 .solar-info-button {
-  right: 88px;
+  right: 90px;
+}
+
+.solar-info-button[hidden] {
+  display: none;
 }
 
 .solar-settings-button:hover,
@@ -39,11 +43,11 @@ body,
 .solar-settings-panel,
 .solar-info-panel {
   position: absolute;
-  top: 88px;
+  top: 48px;
   right: 10px;
   z-index: 3;
   width: min(380px, calc(100vw - 20px));
-  max-height: calc(100vh - 112px);
+  max-height: calc(100vh - 72px);
   overflow: auto;
   box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.2);

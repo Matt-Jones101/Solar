@@ -35,7 +35,15 @@ import './style.css'
 // CREATE VIEWER
 // --------------------------------------------------
 
-const viewer = new Viewer('cesiumContainer')
+const viewer = new Viewer('cesiumContainer', {
+  baseLayerPicker: false,
+  fullscreenButton: false,
+  geocoder: false,
+  homeButton: false,
+  infoBox: false,
+  navigationHelpButton: false,
+  sceneModePicker: false,
+})
 
 // Allow Solar-System-scale viewing distances.
 viewer.camera.frustum.far = 100_000_000_000_000
@@ -78,6 +86,11 @@ if (viewer.scene.skyBox) {
   viewer.scene.skyBox.show = false
 }
 cameraController.enableCollisionDetection = false
+const creditContainer =
+  viewer.cesiumWidget.creditContainer as HTMLElement
+
+creditContainer.style.display =
+  'none'
 
 // Cesium's default maximum zoom rate is roughly the
 // Sun-Pluto distance. That is sensible for Earth scenes,
@@ -113,6 +126,8 @@ const TRACKED_BODY_ZOOM_FACTOR = 8
 const SURFACE_ZOOM_LIMIT_MULTIPLIER = 1.55
 
 const CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER = 0
+
+const SATELLITE_INITIAL_CAMERA_RANGE = 1_500
 
 const orbitOverlayCanvas =
   document.createElement('canvas')
@@ -166,6 +181,19 @@ viewer.clock.shouldAnimate = false
 viewer.clock.multiplier = 86_400
 
 viewer.clock.clockRange = ClockRange.UNBOUNDED
+
+window.addEventListener(
+  'keydown',
+  (event) => {
+    if (event.key !== 'Escape') {
+      return
+    }
+
+    viewer.clock.shouldAnimate =
+      false
+    event.preventDefault()
+  }
+)
 
 const timelineStart = JulianDate.addDays(now, -365, new JulianDate())
 const timelineEnd = JulianDate.addDays(now, 365, new JulianDate())
@@ -1551,6 +1579,7 @@ type PlanetRenderData = {
   orbitNormal: Cartesian3
   physicalOrbitPositions: Cartesian3[]
   orbitPositions: ConstantProperty
+  binaryOrbitPositions?: ConstantProperty
 }
 
 type MoonRenderData = {
@@ -2680,6 +2709,28 @@ function getPlutoCharonPhysicalPositions(
       charon.orbitRadius *
       pluto.massKg / totalMass,
   }
+}
+
+function createPlutoBarycentricOrbitPositions(
+  barycentre: Cartesian3,
+  orbitRadius: number
+) {
+  const charon =
+    majorMoons.find(
+      (moon) =>
+        moon.name === 'Charon'
+    )
+
+  if (!charon) {
+    return []
+  }
+
+  return createMoonOrbitPositions(
+    charon,
+    barycentre,
+    144,
+    orbitRadius
+  )
 }
 
 let renderOrigin =
@@ -4015,7 +4066,15 @@ let saturnRingPrimitive:
   | undefined
 
 for (const planet of planets) {
+  const plutoCharonPositions =
+    planet.name === 'Pluto'
+      ? getPlutoCharonPhysicalPositions(
+          viewer.clock.currentTime
+        )
+      : undefined
+
   const initialPhysicalPosition =
+    plutoCharonPositions?.pluto ??
     getPlanetPosition(
       planet,
       viewer.clock.currentTime
@@ -4056,6 +4115,18 @@ for (const planet of planets) {
         physicalOrbitPositions
       )
     )
+
+  const binaryOrbitPositions =
+    plutoCharonPositions
+      ? new ConstantProperty(
+          toRenderPositions(
+            createPlutoBarycentricOrbitPositions(
+              plutoCharonPositions.barycentre,
+              plutoCharonPositions.plutoOrbitRadius
+            )
+          )
+        )
+      : undefined
 
 
   // --------------------------------------------------
@@ -4180,6 +4251,7 @@ for (const planet of planets) {
       ),
     physicalOrbitPositions,
     orbitPositions,
+    binaryOrbitPositions,
   })
 }
 
@@ -5607,6 +5679,8 @@ infoButton.className =
   'solar-info-button'
 infoButton.textContent =
   'Body info'
+infoButton.hidden =
+  true
 infoButton.title =
   'Show information about the selected body.'
 
@@ -5887,11 +5961,24 @@ function getOrbitEntityAt(
   position: Cartesian2
 ) {
   const candidates = [
-    ...planetRenderData.map(
-      (renderData) => ({
-        entity: renderData.entity,
-        positions: renderData.orbitPositions,
-      })
+    ...planetRenderData.flatMap(
+      (renderData) => [
+        {
+          entity: renderData.entity,
+          positions: renderData.orbitPositions,
+        },
+        ...(
+          renderData.binaryOrbitPositions
+            ? [
+                {
+                  entity: renderData.entity,
+                  positions:
+                    renderData.binaryOrbitPositions,
+                },
+              ]
+            : []
+        ),
+      ]
     ),
     ...moonRenderData.map(
       (renderData) => ({
@@ -6265,26 +6352,22 @@ function updateSelectedBodyInfo() {
     getBodyInfoForEntity(
       selectedEntity
     )
-  const target =
-    getBodyInfoForEntity(
-      activeCameraTargetEntity
-    )
+
+  infoButton.hidden =
+    !selected
+  infoButton.textContent =
+    selected?.name ??
+    'Body info'
 
   infoTitle.textContent =
     selected
       ? selected.name
       : 'Body information'
 
-  appendInfoRow(
-    'Selection',
-    selected?.name ?? 'None'
-  )
-  appendInfoRow(
-    'Camera target',
-    target?.name ?? 'None'
-  )
-
   if (!selectedEntity || !selected) {
+    infoPanel.hidden =
+      true
+
     return
   }
 
@@ -6292,7 +6375,6 @@ function updateSelectedBodyInfo() {
     const spin =
       getBodySpin('Sun')
 
-    appendInfoRow('Kind', 'Star')
     appendInfoRow(
       'Radius',
       formatInfoDistance(sun_rad)
@@ -6325,7 +6407,6 @@ function updateSelectedBodyInfo() {
         planet.planet.a.base ** 3
       ) * 365.25
 
-    appendInfoRow('Kind', 'Planet')
     appendInfoRow(
       'Radius',
       formatInfoDistance(
@@ -6386,7 +6467,6 @@ function updateSelectedBodyInfo() {
   }
 
   if (moon.moon.isArtificialSatellite) {
-    appendInfoRow('Kind', 'Spacecraft')
     appendInfoRow(
       'Model span',
       '109 m'
@@ -6405,11 +6485,6 @@ function updateSelectedBodyInfo() {
         moon.moon
       )
 
-    appendInfoRow('Kind', 'Moon')
-    appendInfoRow(
-      'Parent',
-      moon.parent.planet.name
-    )
     appendInfoRow(
       'Radius',
       formatInfoDistance(
@@ -6587,6 +6662,21 @@ function updateRenderedBodyPositions(
         renderData.physicalOrbitPositions
       )
     )
+
+    if (
+      renderData.planet.name === 'Pluto' &&
+      renderData.binaryOrbitPositions &&
+      plutoCharonPositions
+    ) {
+      renderData.binaryOrbitPositions.setValue(
+        toRenderPositions(
+          createPlutoBarycentricOrbitPositions(
+            plutoCharonPositions.barycentre,
+            plutoCharonPositions.plutoOrbitRadius
+          )
+        )
+      )
+    }
   }
 
   for (const renderData of moonRenderData) {
@@ -6892,7 +6982,6 @@ function updateCameraZoomRate() {
 
     cameraController.enableCollisionDetection =
       false
-
     cameraController._maximumZoomRate =
       100_000_000_000_000
 
@@ -6913,12 +7002,10 @@ function updateCameraZoomRate() {
       activeCameraTargetEntity
     )
   ) {
-    // A 55 m proxy ellipsoid makes Cesium's collision camera alternate between
-    // collision and inertia states. Spacecraft use an unconstrained controller
-    // so they can be orbited and approached like a visible model.
-    updateCameraControllerEllipsoid(
-      undefined
-    )
+    // Use the model's real collision scale, while keeping collision disabled.
+    // The controller's rotation and zoom calculations depend on this radius,
+    // so a near-zero proxy makes an ISS camera feel unstable.
+    updateCameraControllerEllipsoid(radius)
 
     cameraController.zoomFactor =
       Math.max(
@@ -6959,7 +7046,6 @@ function updateCameraZoomRate() {
   // surface without showing Cesium's normal Earth globe.
   cameraController.enableCollisionDetection =
     true
-
   cameraController._minimumZoomRate =
     Math.max(
       DEFAULT_MINIMUM_ZOOM_RATE,
@@ -7195,10 +7281,10 @@ function trackBody(
   ) {
     const satelliteRange =
       Math.max(
-        450,
+        SATELLITE_INITIAL_CAMERA_RANGE,
         getWholeBodyCameraRange(
           entityRadius
-        ) * 3
+        ) * 8
       )
 
     if (currentRange > satelliteRange * 3) {
@@ -8354,7 +8440,39 @@ function drawOrbitOverlay() {
         overlay.width,
         overlay.height
       )
+
     }
+  }
+
+  for (const renderData of planetRenderData) {
+    if (!renderData.binaryOrbitPositions) {
+      continue
+    }
+
+    const planetGap =
+      createBodyOrbitGap(
+        renderData.currentPosition,
+        renderData.planet.radius,
+        getPlanetTuning(
+          renderData
+        ),
+        renderData.billboardState
+      )
+
+    drawOrbitPath(
+      overlay.context,
+      renderData.binaryOrbitPositions.getValue(
+        viewer.clock.currentTime
+      ) as Cartesian3[] | undefined,
+      renderData.planet.colour,
+      orbitTuningSettings.moonOrbitAlpha,
+      orbitTuningSettings.moonOrbitWidth,
+      planetGap
+        ? [planetGap]
+        : [],
+      overlay.width,
+      overlay.height
+    )
   }
 
   const moonSystemGapsByParent =
@@ -8701,6 +8819,22 @@ function updateBillboardFade(
 
   state.hiddenBySize =
     !state.visible
+
+  // Context suppression fades an otherwise eligible icon out. When it becomes
+  // eligible again, restore its full opacity in this frame rather than leaving
+  // it at a nearly-invisible intermediate alpha while the camera is zooming.
+  if (
+    state.visible &&
+    (wasSuppressedByContext ||
+      state.alpha <= 0.01)
+  ) {
+    state.alpha = 1
+    billboardColor.setValue(
+      Color.WHITE.withAlpha(1)
+    )
+
+    return
+  }
 
   moveBillboardAlphaToward(
     billboardColor,
