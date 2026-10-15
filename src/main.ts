@@ -5450,43 +5450,13 @@ function refreshEntityDisplayNow(
 }
 
 function getCameraConstraintAxisWorld(
-  entity:
+  _entity:
     | Entity
     | undefined
 ): Cartesian3 {
-  if (
-    !entity ||
-    entity === sunEntity
-  ) {
-    return Cartesian3.UNIT_Z
-  }
-
-  const planet =
-    planetRenderData.find(
-      (renderData) =>
-        renderData.entity === entity
-    )
-
-  if (planet) {
-    planet.orbitNormal =
-      getPlanetOrbitNormal(
-        planet.planet,
-        viewer.clock.currentTime
-      )
-
-    return planet.orbitNormal
-  }
-
-  const moon =
-    moonRenderData.find(
-      (renderData) =>
-        renderData.entity === entity
-    )
-
-  if (moon) {
-    return moon.orbitNormal
-  }
-
+  // This scene uses the J2000 ecliptic plane as its common solar-system
+  // reference. Keeping one axis prevents the camera frame from changing when
+  // moving between planets, moons, and spacecraft.
   return Cartesian3.UNIT_Z
 }
 
@@ -5573,6 +5543,22 @@ function updateCameraConstraintAxis(
       localAxis,
       localAxis
     )
+}
+
+function isEntityArtificialSatellite(
+  entity:
+    | Entity
+    | undefined
+) {
+  if (!entity) {
+    return false
+  }
+
+  return moonRenderData.some(
+    (renderData) =>
+      renderData.entity === entity &&
+      renderData.moon.isArtificialSatellite
+  )
 }
 
 function updateCameraControllerEllipsoid(
@@ -5689,6 +5675,9 @@ function updateCameraZoomRate() {
     cameraController.minimumZoomDistance =
       DEFAULT_MINIMUM_ZOOM_DISTANCE
 
+    cameraController.enableCollisionDetection =
+      false
+
     cameraController._maximumZoomRate =
       100_000_000_000_000
 
@@ -5719,6 +5708,12 @@ function updateCameraZoomRate() {
           .surfaceZoomLimitMultiplier -
         1
       )
+
+  // Cesium only applies minimumZoomDistance as a hard stop when collision
+  // handling is enabled. The custom ellipsoid above supplies that collision
+  // surface without showing Cesium's normal Earth globe.
+  cameraController.enableCollisionDetection =
+    true
 
   cameraController._minimumZoomRate =
     Math.max(
@@ -5955,7 +5950,12 @@ function trackBody(
   viewer.selectedEntity =
     undefined
 
-  const range =
+  const entityRadius =
+    getEntityRadius(
+      entity
+    )
+
+  const currentRange =
     Math.max(
       Cartesian3.distance(
         viewer.camera.positionWC,
@@ -5963,6 +5963,32 @@ function trackBody(
       ),
       1
     )
+
+  if (
+    isEntityArtificialSatellite(
+      entity
+    ) &&
+    entityRadius
+  ) {
+    const satelliteRange =
+      getWholeBodyCameraRange(
+        entityRadius
+      ) *
+      1.8
+
+    if (currentRange > satelliteRange * 3) {
+      frameBodyAtRange(
+        entity,
+        satelliteRange,
+        viewer.camera.directionWC
+      )
+
+      return
+    }
+  }
+
+  const range =
+    currentRange
 
   const directionWC =
     Cartesian3.clone(
@@ -6729,6 +6755,81 @@ function interpolateScreenPoint(
   )
 }
 
+function isPointVisibleInFrontOfBody(
+  point: Cartesian3,
+  bodyPosition: Cartesian3,
+  bodyRadius: number
+) {
+  const cameraToPoint =
+    Cartesian3.subtract(
+      point,
+      viewer.camera.positionWC,
+      new Cartesian3()
+    )
+
+  const pointDistance =
+    Cartesian3.magnitude(
+      cameraToPoint
+    )
+
+  if (pointDistance <= 0) {
+    return false
+  }
+
+  const rayDirection =
+    Cartesian3.divideByScalar(
+      cameraToPoint,
+      pointDistance,
+      new Cartesian3()
+    )
+
+  const cameraToBody =
+    Cartesian3.subtract(
+      bodyPosition,
+      viewer.camera.positionWC,
+      new Cartesian3()
+    )
+
+  const bodyDistanceAlongRay =
+    Cartesian3.dot(
+      cameraToBody,
+      rayDirection
+    )
+
+  if (
+    bodyDistanceAlongRay <= 0 ||
+    bodyDistanceAlongRay >= pointDistance
+  ) {
+    return true
+  }
+
+  const closestDistanceSquared =
+    Cartesian3.magnitudeSquared(
+      cameraToBody
+    ) -
+    bodyDistanceAlongRay *
+      bodyDistanceAlongRay
+
+  const bodyRadiusSquared =
+    bodyRadius * bodyRadius
+
+  if (
+    closestDistanceSquared >=
+    bodyRadiusSquared
+  ) {
+    return true
+  }
+
+  const nearSurfaceDistance =
+    bodyDistanceAlongRay -
+    Math.sqrt(
+      bodyRadiusSquared -
+        closestDistanceSquared
+    )
+
+  return pointDistance <= nearSurfaceDistance
+}
+
 function drawOrbitPath(
   context: CanvasRenderingContext2D,
   positions: Cartesian3[] | undefined,
@@ -6737,7 +6838,10 @@ function drawOrbitPath(
   width: number,
   gaps: OrbitGap[],
   canvasWidth: number,
-  canvasHeight: number
+  canvasHeight: number,
+  isPointVisible: (
+    (position: Cartesian3) => boolean
+  ) | undefined = undefined
 ) {
   if (
     !positions ||
@@ -6782,6 +6886,18 @@ function drawOrbitPath(
     }
 
   for (const position of positions) {
+    if (
+      isPointVisible &&
+      !isPointVisible(
+        position
+      )
+    ) {
+      finishStroke()
+      previousPoint =
+        undefined
+      continue
+    }
+
     const point =
       getScreenPosition(
         position
@@ -7082,10 +7198,34 @@ function drawOrbitOverlay() {
       continue
     }
 
-    const gaps =
-      getMoonSystemGaps(
-        renderData.parent
+    const isArtificialSatellite =
+      Boolean(
+        renderData.moon
+          .isArtificialSatellite
       )
+
+    const gaps =
+      isArtificialSatellite
+        ? [
+          createBodyOrbitGap(
+            renderData.currentPosition,
+            renderData.moon.radius,
+            getMoonTuning(
+              renderData
+            ),
+            renderData.billboardState
+          ),
+        ].filter(
+          (
+            gap
+          ): gap is OrbitGap =>
+            Boolean(
+              gap
+            )
+        )
+        : getMoonSystemGaps(
+          renderData.parent
+        )
 
     drawOrbitPath(
       overlay.context,
@@ -7097,7 +7237,17 @@ function drawOrbitOverlay() {
       orbitTuningSettings.moonOrbitWidth,
       gaps,
       overlay.width,
-      overlay.height
+      overlay.height,
+      isArtificialSatellite
+        ? (position) =>
+          isPointVisibleInFrontOfBody(
+            position,
+            renderData.parent
+              .currentPosition,
+            renderData.parent
+              .planet.radius
+          )
+        : undefined
     )
   }
 }
