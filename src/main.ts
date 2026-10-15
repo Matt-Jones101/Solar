@@ -54,6 +54,7 @@ viewer.camera.constrainedAxis =
 
 type SolarCameraController =
   typeof viewer.scene.screenSpaceCameraController & {
+    update: () => void
     _ellipsoid?: Ellipsoid
     _minimumCollisionTerrainHeight?: number
     _minimumPickingTerrainDistanceWithInertia?: number
@@ -127,7 +128,8 @@ const SURFACE_ZOOM_LIMIT_MULTIPLIER = 1.55
 
 const CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER = 0
 
-const SATELLITE_INITIAL_CAMERA_RANGE = 1_500
+const CURSOR_ZOOM_START_ALTITUDE_MULTIPLIER =
+  0.35
 
 const orbitOverlayCanvas =
   document.createElement('canvas')
@@ -1305,6 +1307,7 @@ type CameraTuningSettings = {
   constrainedAxisCloseupRangeMultiplier: number
   surfaceZoomLimitMultiplier: number
   trackedBodyZoomFactor: number
+  cursorZoomStartAltitudeMultiplier: number
 }
 
 function getDerivedIconFadeInPixelDiameter(
@@ -1441,6 +1444,9 @@ const DEFAULT_CAMERA_TUNING_SETTINGS:
 
   trackedBodyZoomFactor:
     TRACKED_BODY_ZOOM_FACTOR,
+
+  cursorZoomStartAltitudeMultiplier:
+    CURSOR_ZOOM_START_ALTITUDE_MULTIPLIER,
 }
 
 const cameraTuningSettings:
@@ -2222,8 +2228,20 @@ function getBodyRotationMatrix(
       degToRad(spin.axialTiltDegrees)
     )
 
+  // EllipsoidGeometry maps the centre of an equirectangular texture (the
+  // Greenwich meridian in our Earth map) to its local negative-X axis. GMST
+  // is defined from positive X, so Earth needs this static half-turn before
+  // its sidereal spin is applied.
+  const textureMeridianOffset =
+    name === 'Earth'
+      ? Math.PI
+      : 0
+
   const bodySpin =
-    Matrix3.fromRotationZ(spinAngle)
+    Matrix3.fromRotationZ(
+      spinAngle +
+        textureMeridianOffset
+    )
 
   return Matrix3.multiply(
     axialTilt,
@@ -5656,6 +5674,26 @@ createNumberControl(
   }
 )
 
+createNumberControl(
+  cameraSection,
+  'Cursor zoom starts x radius above surface',
+  'Above this altitude, wheel and pinch zoom stay centred on the targeted body. At or below it, zoom follows the pointer for close inspection. Set 0 to keep centred zoom until the surface.',
+  0,
+  5,
+  0.05,
+  () =>
+    cameraTuningSettings
+      .cursorZoomStartAltitudeMultiplier,
+  (value) => {
+    cameraTuningSettings
+      .cursorZoomStartAltitudeMultiplier =
+      value
+  },
+  {
+    clamp: false,
+  }
+)
+
 settingsPanel.append(
   settingsHeader,
   settingsTargetRow,
@@ -6196,6 +6234,65 @@ function getEntityRadius(
   }
 
   return undefined
+}
+
+function shouldUseCursorAnchoredZoom() {
+  if (!activeCameraTargetEntity) {
+    return false
+  }
+
+  const position =
+    getEntityRenderPosition(
+      activeCameraTargetEntity
+    )
+  const radius =
+    getEntityRadius(
+      activeCameraTargetEntity
+    )
+
+  if (!position || !radius) {
+    return false
+  }
+
+  const altitude =
+    Cartesian3.distance(
+      viewer.camera.positionWC,
+      position
+    ) - radius
+
+  return (
+    altitude <=
+    radius *
+      cameraTuningSettings
+        .cursorZoomStartAltitudeMultiplier
+  )
+}
+
+// Cesium derives cursor-anchored zoom from whether its hidden WGS84 globe
+// considers the camera underground. Solar bodies each use a separate local
+// frame, so substitute an explicit per-body altitude threshold only while the
+// camera controller processes input, then restore the scene's normal state.
+const nativeCameraControllerUpdate =
+  cameraController.update.bind(
+    cameraController
+  )
+
+cameraController.update = () => {
+  const scene = viewer.scene as typeof viewer.scene & {
+    _cameraUnderground: boolean
+  }
+  const nativeCameraUnderground =
+    scene._cameraUnderground
+
+  if (activeCameraTargetEntity) {
+    scene._cameraUnderground =
+      shouldUseCursorAnchoredZoom()
+  }
+
+  nativeCameraControllerUpdate()
+
+  scene._cameraUnderground =
+    nativeCameraUnderground
 }
 
 function isEntityMoon(
@@ -7259,11 +7356,6 @@ function trackBody(
 
   clearNativeTrackedEntity()
 
-  const entityRadius =
-    getEntityRadius(
-      entity
-    )
-
   const currentRange =
     Math.max(
       Cartesian3.distance(
@@ -7272,31 +7364,6 @@ function trackBody(
       ),
       1
     )
-
-  if (
-    isEntityArtificialSatellite(
-      entity
-    ) &&
-    entityRadius
-  ) {
-    const satelliteRange =
-      Math.max(
-        SATELLITE_INITIAL_CAMERA_RANGE,
-        getWholeBodyCameraRange(
-          entityRadius
-        ) * 8
-      )
-
-    if (currentRange > satelliteRange * 3) {
-      frameBodyAtRange(
-        entity,
-        satelliteRange,
-        viewer.camera.directionWC
-      )
-
-      return
-    }
-  }
 
   const range =
     currentRange
@@ -8771,6 +8838,8 @@ function updateBillboardFade(
 
   const wasSuppressedByContext =
     state.suppressedByContext
+  const wasVisible =
+    state.visible
 
   state.suppressedByContext =
     false
@@ -8797,17 +8866,6 @@ function updateBillboardFade(
     state.visible = true
   }
 
-  // Local-view suppression deliberately does not change the size state. When
-  // leaving that view, restore an icon immediately whenever it is back below
-  // the fade-in threshold instead of waiting for another threshold crossing.
-  if (
-    wasSuppressedByContext &&
-    pixelDiameter <= fadeInThreshold
-  ) {
-    state.visible = true
-  }
-
-
   // --------------------------------------------------
   // FIXED-TIME FADE
   // --------------------------------------------------
@@ -8820,13 +8878,14 @@ function updateBillboardFade(
   state.hiddenBySize =
     !state.visible
 
-  // Context suppression fades an otherwise eligible icon out. When it becomes
-  // eligible again, restore its full opacity in this frame rather than leaving
-  // it at a nearly-invisible intermediate alpha while the camera is zooming.
+  // Local-view suppression never changes size visibility. Once the camera has
+  // left that view, restore an eligible icon in this frame rather than leaving
+  // it at a nearly-invisible intermediate alpha during the return zoom.
   if (
     state.visible &&
+    !isTrackedBodyLocalView() &&
     (wasSuppressedByContext ||
-      state.alpha <= 0.01)
+      !wasVisible)
   ) {
     state.alpha = 1
     billboardColor.setValue(
