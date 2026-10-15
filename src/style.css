@@ -8,10 +8,10 @@ body,
   overflow: hidden;
 }
 
-.solar-settings-button {
+.solar-settings-button,
+.solar-info-button {
   position: absolute;
   top: 50px;
-  right: 10px;
   z-index: 3;
   border: 1px solid rgba(255, 255, 255, 0.35);
   background: rgba(22, 26, 32, 0.9);
@@ -21,12 +21,23 @@ body,
   cursor: pointer;
 }
 
+.solar-settings-button {
+  right: 10px;
+}
+
+.solar-info-button {
+  right: 88px;
+}
+
 .solar-settings-button:hover,
+.solar-info-button:hover,
+.solar-info-panel button:hover,
 .solar-settings-panel button:hover {
   background: rgba(54, 62, 74, 0.95);
 }
 
-.solar-settings-panel {
+.solar-settings-panel,
+.solar-info-panel {
   position: absolute;
   top: 88px;
   right: 10px;
@@ -46,6 +57,49 @@ body,
 
 .solar-settings-panel[hidden] {
   display: none;
+}
+
+.solar-info-panel[hidden] {
+  display: none;
+}
+
+.solar-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.solar-info-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.solar-info-panel button {
+  padding: 5px 8px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f4f7fb;
+  font: inherit;
+}
+
+.solar-info-list {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.9fr) minmax(0, 1.2fr);
+  gap: 7px 12px;
+  margin: 14px 0 0;
+}
+
+.solar-info-list dt {
+  color: #b8c2d2;
+}
+
+.solar-info-list dd {
+  margin: 0;
+  color: #f4f7fb;
+  overflow-wrap: anywhere;
 }
 
 .solar-settings-header,

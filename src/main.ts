@@ -1468,6 +1468,7 @@ type PlanetData = {
   name: string
   radius: number
   colour: string
+  massKg?: number
 
   a: OrbitalValue
   e: OrbitalValue
@@ -1482,6 +1483,7 @@ type MoonData = {
   name: string
   parent: string
   radius: number
+  massKg?: number
   orbitRadius: number
   orbitalPeriodDays: number
   colour: string
@@ -1743,6 +1745,7 @@ const planets: PlanetData[] = [
     name: 'Pluto',
     radius: 1_188_300,
     colour: '#a8947a',
+    massKg: 1.303e22,
 
     a: { base: 39.48211675, rate: -0.00031596 },
     e: { base: 0.24882730, rate: 0.00005170 },
@@ -2022,6 +2025,7 @@ const majorMoons: MoonData[] = [
     name: 'Charon',
     parent: 'Pluto',
     radius: 606_000,
+    massKg: 1.586e21,
     orbitRadius: 19_596_000,
     orbitalPeriodDays: 6.3872,
     colour: '#b0a59c',
@@ -2493,10 +2497,10 @@ function createOrbitPositions(
   return positions
 }
 
-function getMoonPosition(
+function getMoonRelativePosition(
   moon: MoonData,
-  parentPosition: Cartesian3,
-  time: JulianDate
+  time: JulianDate,
+  orbitRadius: number = moon.orbitRadius
 ): Cartesian3 {
   const daysSinceJ2000 =
     getJulianDay(
@@ -2521,12 +2525,11 @@ function getMoonPosition(
     Math.PI *
     2
 
-  const relativePosition =
-    orbitalPlaneToWorld(
-      moon.orbitRadius * Math.cos(
+  return orbitalPlaneToWorld(
+      orbitRadius * Math.cos(
         orbitAngle
       ),
-      moon.orbitRadius * Math.sin(
+      orbitRadius * Math.sin(
         orbitAngle
       ),
       degToRad(
@@ -2536,6 +2539,18 @@ function getMoonPosition(
         moon.longitudeAscendingNode
       ),
       0
+    )
+}
+
+function getMoonPosition(
+  moon: MoonData,
+  parentPosition: Cartesian3,
+  time: JulianDate
+): Cartesian3 {
+  const relativePosition =
+    getMoonRelativePosition(
+      moon,
+      time
     )
 
   return Cartesian3.add(
@@ -2548,7 +2563,8 @@ function getMoonPosition(
 function createMoonOrbitPositions(
   moon: MoonData,
   parentPosition: Cartesian3,
-  segments: number = 144
+  segments: number = 144,
+  orbitRadius: number = moon.orbitRadius
 ): Cartesian3[] {
   const positions: Cartesian3[] = []
 
@@ -2562,10 +2578,10 @@ function createMoonOrbitPositions(
 
     const relativePosition =
       orbitalPlaneToWorld(
-        moon.orbitRadius * Math.cos(
+        orbitRadius * Math.cos(
           orbitAngle
         ),
-        moon.orbitRadius * Math.sin(
+        orbitRadius * Math.sin(
           orbitAngle
         ),
         degToRad(
@@ -2587,6 +2603,83 @@ function createMoonOrbitPositions(
   }
 
   return positions
+}
+
+function getPlutoCharonPhysicalPositions(
+  time: JulianDate
+) {
+  const pluto =
+    planets.find(
+      (planet) =>
+        planet.name === 'Pluto'
+    )
+
+  const charon =
+    majorMoons.find(
+      (moon) =>
+        moon.name === 'Charon'
+    )
+
+  if (
+    !pluto ||
+    !charon ||
+    !pluto.massKg ||
+    !charon.massKg
+  ) {
+    return undefined
+  }
+
+  // Pluto's heliocentric elements locate the pair's barycentre. Their shared
+  // separation then places both physical bodies on opposite sides of it.
+  const barycentre =
+    getPlanetPosition(
+      pluto,
+      time
+    )
+
+  const relativePosition =
+    getMoonRelativePosition(
+      charon,
+      time
+    )
+
+  const totalMass =
+    pluto.massKg +
+    charon.massKg
+
+  const plutoOffset =
+    Cartesian3.multiplyByScalar(
+      relativePosition,
+      -charon.massKg / totalMass,
+      new Cartesian3()
+    )
+
+  const charonOffset =
+    Cartesian3.multiplyByScalar(
+      relativePosition,
+      pluto.massKg / totalMass,
+      new Cartesian3()
+    )
+
+  return {
+    barycentre,
+    pluto: Cartesian3.add(
+      barycentre,
+      plutoOffset,
+      new Cartesian3()
+    ),
+    charon: Cartesian3.add(
+      barycentre,
+      charonOffset,
+      new Cartesian3()
+    ),
+    plutoOrbitRadius:
+      charon.orbitRadius *
+      charon.massKg / totalMass,
+    charonOrbitRadius:
+      charon.orbitRadius *
+      pluto.massKg / totalMass,
+  }
 }
 
 let renderOrigin =
@@ -2647,6 +2740,29 @@ function makeCircleIcon(
         r="28"
         fill="${colour}"
       />
+    </svg>
+  `
+
+  return (
+    'data:image/svg+xml;charset=utf-8,' +
+    encodeURIComponent(svg)
+  )
+}
+
+function makeIssIcon(): string {
+  const svg = `
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="64"
+      height="64"
+      viewBox="0 0 64 64"
+    >
+      <rect x="3" y="25" width="20" height="14" rx="1" fill="#4d82bc" />
+      <rect x="41" y="25" width="20" height="14" rx="1" fill="#4d82bc" />
+      <rect x="24" y="27" width="16" height="10" rx="2" fill="#eef4fa" />
+      <rect x="29" y="17" width="6" height="30" rx="1" fill="#cad8e5" />
+      <path d="M23 32h18M32 16v32" stroke="#152738" stroke-width="2" />
+      <circle cx="32" cy="22" r="4" fill="#f5d276" />
     </svg>
   `
 
@@ -3210,7 +3326,7 @@ for (const tier of earthTextureTiers) {
 const moonSurfaceTexture =
   createStylizedMoonTexture().toDataURL()
 
-const solidBodyTextures =
+const approximateBodyTextures =
   new Map<string, string>()
 
 const litBodyPrimitives =
@@ -3229,44 +3345,190 @@ czm_material czm_getMaterial(czm_materialInput materialInput)
     normalize(materialInput.normalEC),
     normalize(sunDirectionEC)
   );
-  float daylight = smoothstep(-0.16, 0.10, solarFacing);
-  float illumination = mix(0.025, 1.0, daylight);
+  float daylight = smoothstep(-0.04, 0.08, solarFacing);
+  float illumination = mix(0.006, 1.0, daylight);
   illumination = mix(illumination, 1.0, selfIlluminated);
   material.diffuse = surface.rgb * illumination;
   material.emission = surface.rgb * selfIlluminated;
+  material.specular = 0.0;
   material.alpha = surface.a;
   return material;
 }
 `
 
-function getSolidBodyTexture(
+function getTextureNoise(
+  bodyName: string,
+  index: number
+) {
+  let hash =
+    index * 374761393
+
+  for (
+    let characterIndex = 0;
+    characterIndex < bodyName.length;
+    characterIndex += 1
+  ) {
+    hash =
+      (hash * 31 + bodyName.charCodeAt(characterIndex)) |
+      0
+  }
+
+  hash =
+    (hash ^ (hash >>> 13)) * 1274126177
+
+  return (
+    (hash ^ (hash >>> 16)) >>> 0
+  ) / 4_294_967_295
+}
+
+function getApproximateBodyTexture(
+  bodyName: string,
   colour: string
 ) {
+  const textureKey =
+    `${bodyName}:${colour}`
+
   const existingTexture =
-    solidBodyTextures.get(colour)
+    approximateBodyTextures.get(textureKey)
 
   if (existingTexture) {
     return existingTexture
   }
 
   const texture =
-    document.createElement('canvas')
-
-  texture.width = 2
-  texture.height = 2
+    createTextureCanvas(
+      512,
+      256
+    )
 
   const context =
     texture.getContext('2d')
 
   if (context) {
     context.fillStyle = colour
-    context.fillRect(0, 0, 2, 2)
+    context.fillRect(
+      0,
+      0,
+      texture.width,
+      texture.height
+    )
+
+    const isGasGiant =
+      [
+        'Jupiter',
+        'Saturn',
+        'Uranus',
+        'Neptune',
+      ].includes(bodyName)
+
+    if (isGasGiant) {
+      const bandCount =
+        bodyName === 'Jupiter'
+          ? 18
+          : 12
+
+      for (
+        let index = 0;
+        index < bandCount;
+        index += 1
+      ) {
+        const y =
+          (index / bandCount) *
+          texture.height
+
+        context.fillStyle =
+          index % 2 === 0
+            ? 'rgba(255, 255, 255, 0.14)'
+            : 'rgba(22, 38, 54, 0.13)'
+        context.fillRect(
+          0,
+          y,
+          texture.width,
+          texture.height / bandCount + 1
+        )
+      }
+
+      if (bodyName === 'Jupiter') {
+        context.fillStyle =
+          'rgba(144, 67, 43, 0.7)'
+        context.beginPath()
+        context.ellipse(
+          texture.width * 0.72,
+          texture.height * 0.57,
+          26,
+          12,
+          -0.08,
+          0,
+          Math.PI * 2
+        )
+        context.fill()
+      }
+    } else if (bodyName === 'Sun') {
+      const glow =
+        context.createRadialGradient(
+          texture.width * 0.5,
+          texture.height * 0.5,
+          10,
+          texture.width * 0.5,
+          texture.height * 0.5,
+          texture.width * 0.5
+        )
+      glow.addColorStop(0, '#fff1a0')
+      glow.addColorStop(0.42, '#ffc533')
+      glow.addColorStop(1, '#e76d16')
+      context.fillStyle = glow
+      context.fillRect(0, 0, texture.width, texture.height)
+    } else {
+      for (
+        let index = 0;
+        index < 48;
+        index += 1
+      ) {
+        const x =
+          getTextureNoise(bodyName, index) *
+          texture.width
+        const y =
+          getTextureNoise(bodyName, index + 97) *
+          texture.height
+        const radius =
+          2 +
+          getTextureNoise(bodyName, index + 211) * 14
+
+        context.fillStyle =
+          index % 2 === 0
+            ? 'rgba(255, 255, 255, 0.12)'
+            : 'rgba(40, 35, 30, 0.18)'
+        context.beginPath()
+        context.ellipse(
+          x,
+          y,
+          radius,
+          radius * 0.55,
+          0,
+          0,
+          Math.PI * 2
+        )
+        context.fill()
+      }
+
+      if (bodyName === 'Mars') {
+        context.fillStyle =
+          'rgba(240, 225, 208, 0.42)'
+        context.fillRect(0, 0, texture.width, 20)
+        context.fillRect(
+          0,
+          texture.height - 18,
+          texture.width,
+          18
+        )
+      }
+    }
   }
 
   const dataUrl =
     texture.toDataURL()
 
-  solidBodyTextures.set(colour, dataUrl)
+  approximateBodyTextures.set(textureKey, dataUrl)
 
   return dataUrl
 }
@@ -3313,7 +3575,10 @@ function createBodyPrimitive(
 ) {
   const surfaceTexture =
     texture ??
-    getSolidBodyTexture(colour)
+    getApproximateBodyTexture(
+      entity.name ?? 'Body',
+      colour
+    )
 
   const {
     material,
@@ -3358,6 +3623,7 @@ function createBodyPrimitive(
         new MaterialAppearance({
           closed: true,
           translucent: false,
+          flat: true,
           materialSupport:
             MaterialAppearance
               .MaterialSupport
@@ -3456,6 +3722,116 @@ function createIssPrimitive(
   ) as Primitive
 }
 
+function createSaturnRingsPrimitive(
+  entity: Entity,
+  radius: number,
+  position: Cartesian3
+) {
+  const ringBands = [
+    {
+      innerRadius: radius * 1.28,
+      outerRadius: radius * 1.42,
+      colour: '#8e7b56',
+      alpha: 0.45,
+    },
+    {
+      innerRadius: radius * 1.47,
+      outerRadius: radius * 1.82,
+      colour: '#d9c48f',
+      alpha: 0.72,
+    },
+    {
+      innerRadius: radius * 1.86,
+      outerRadius: radius * 2.12,
+      colour: '#a58d66',
+      alpha: 0.5,
+    },
+  ]
+  const segments = 112
+  const geometryInstances: GeometryInstance[] = []
+
+  for (const band of ringBands) {
+    const centreRadius =
+      (band.innerRadius + band.outerRadius) / 2
+    const radialWidth =
+      band.outerRadius - band.innerRadius
+
+    for (
+      let index = 0;
+      index < segments;
+      index += 1
+    ) {
+      const angle =
+        (index / segments) * Math.PI * 2
+      const arcLength =
+        (Math.PI * 2 * centreRadius) / segments * 1.08
+      const offset =
+        new Cartesian3(
+          Math.cos(angle) * centreRadius,
+          Math.sin(angle) * centreRadius,
+          0
+        )
+      const rotation =
+        Matrix3.fromRotationZ(
+          angle + Math.PI / 2,
+          new Matrix3()
+        )
+
+      geometryInstances.push(
+        new GeometryInstance({
+          id: entity,
+          geometry: BoxGeometry.fromDimensions({
+            dimensions: new Cartesian3(
+              arcLength,
+              radialWidth,
+              Math.max(radius * 0.003, 20_000)
+            ),
+            vertexFormat:
+              PerInstanceColorAppearance
+                .VERTEX_FORMAT,
+          }),
+          modelMatrix:
+            Matrix4.fromRotationTranslation(
+              rotation,
+              offset
+            ),
+          attributes: {
+            color:
+              ColorGeometryInstanceAttribute
+                .fromColor(
+                  Color
+                    .fromCssColorString(
+                      band.colour
+                    )
+                    .withAlpha(
+                      band.alpha
+                    )
+                ),
+          },
+        })
+      )
+    }
+  }
+
+  return viewer.scene.primitives.add(
+    new Primitive({
+      geometryInstances,
+      appearance:
+        new PerInstanceColorAppearance({
+          closed: false,
+          translucent: true,
+          flat: true,
+        }),
+      asynchronous: false,
+      cull: false,
+      modelMatrix:
+        Matrix4.fromTranslation(
+          position
+        ),
+    })
+  ) as Primitive
+}
+
 function updateBodyPrimitiveTransform(
   primitive: Primitive,
   position: Cartesian3,
@@ -3507,6 +3883,11 @@ function updateBodyDayNightMaterial(
     lighting.sunDirectionEC,
     lighting.sunDirectionEC
   )
+
+  // Material uniforms are copied when Cesium builds the fabric. Reassign the
+  // updated vector so each frame receives the current sun direction.
+  lighting.material.uniforms.sunDirectionEC =
+    lighting.sunDirectionEC
 }
 
 function setBodyPrimitiveTexture(
@@ -3628,6 +4009,10 @@ trackableBodies.add(
 // --------------------------------------------------
 
 const planetRenderData: PlanetRenderData[] = []
+
+let saturnRingPrimitive:
+  | Primitive
+  | undefined
 
 for (const planet of planets) {
   const initialPhysicalPosition =
@@ -3764,6 +4149,15 @@ for (const planet of planets) {
         ? initialEarthSurfaceTexture
         : undefined
     )
+
+  if (planet.name === 'Saturn') {
+    saturnRingPrimitive =
+      createSaturnRingsPrimitive(
+        planetEntity,
+        planet.radius,
+        initialPosition
+      )
+  }
 
   trackableBodies.add(
     planetEntity
@@ -3918,12 +4312,20 @@ for (const moon of majorMoons) {
 
     billboard: {
       image:
-        makeCircleIcon(
-          moon.colour
-        ),
+        moon.isArtificialSatellite
+          ? makeIssIcon()
+          : makeCircleIcon(
+              moon.colour
+            ),
 
-      width: 20,
-      height: 20,
+      width:
+        moon.isArtificialSatellite
+          ? 34
+          : 20,
+      height:
+        moon.isArtificialSatellite
+          ? 34
+          : 20,
 
       color:
         billboardColor,
@@ -5194,9 +5596,83 @@ settingsPanel.append(
   cameraSection
 )
 
+const infoButton =
+  document.createElement(
+    'button'
+  )
+
+infoButton.type =
+  'button'
+infoButton.className =
+  'solar-info-button'
+infoButton.textContent =
+  'Body info'
+infoButton.title =
+  'Show information about the selected body.'
+
+const infoPanel =
+  document.createElement(
+    'section'
+  )
+
+infoPanel.className =
+  'solar-info-panel'
+infoPanel.hidden =
+  true
+infoPanel.setAttribute(
+  'aria-label',
+  'Selected body information'
+)
+
+const infoHeader =
+  document.createElement(
+    'div'
+  )
+
+infoHeader.className =
+  'solar-info-header'
+
+const infoTitle =
+  document.createElement(
+    'h2'
+  )
+
+infoTitle.textContent =
+  'Body information'
+
+const infoCloseButton =
+  document.createElement(
+    'button'
+  )
+
+infoCloseButton.type =
+  'button'
+infoCloseButton.textContent =
+  'Close'
+
+infoHeader.append(
+  infoTitle,
+  infoCloseButton
+)
+
+const infoList =
+  document.createElement(
+    'dl'
+  )
+
+infoList.className =
+  'solar-info-list'
+
+infoPanel.append(
+  infoHeader,
+  infoList
+)
+
 orbitOverlayParent.append(
   settingsButton,
-  settingsPanel
+  infoButton,
+  settingsPanel,
+  infoPanel
 )
 
 settingsButton.addEventListener(
@@ -5204,6 +5680,8 @@ settingsButton.addEventListener(
   () => {
     settingsPanel.hidden =
       !settingsPanel.hidden
+    infoPanel.hidden =
+      true
   }
 )
 
@@ -5211,6 +5689,25 @@ settingsCloseButton.addEventListener(
   'click',
   () => {
     settingsPanel.hidden =
+      true
+  }
+)
+
+infoButton.addEventListener(
+  'click',
+  () => {
+    infoPanel.hidden =
+      !infoPanel.hidden
+    settingsPanel.hidden =
+      true
+    updateSelectedBodyInfo()
+  }
+)
+
+infoCloseButton.addEventListener(
+  'click',
+  () => {
+    infoPanel.hidden =
       true
   }
 )
@@ -5348,9 +5845,134 @@ function getTrackableBodyAt(
   return undefined
 }
 
+function getDistanceToScreenSegment(
+  point: Cartesian2,
+  start: Cartesian2,
+  end: Cartesian2
+) {
+  const deltaX =
+    end.x - start.x
+  const deltaY =
+    end.y - start.y
+  const lengthSquared =
+    deltaX * deltaX +
+    deltaY * deltaY
+
+  if (lengthSquared === 0) {
+    return Cartesian2.distance(
+      point,
+      start
+    )
+  }
+
+  const progress =
+    Math.max(
+      0,
+      Math.min(
+        1,
+        (
+          (point.x - start.x) * deltaX +
+          (point.y - start.y) * deltaY
+        ) / lengthSquared
+      )
+    )
+
+  return Math.hypot(
+    point.x - (start.x + deltaX * progress),
+    point.y - (start.y + deltaY * progress)
+  )
+}
+
+function getOrbitEntityAt(
+  position: Cartesian2
+) {
+  const candidates = [
+    ...planetRenderData.map(
+      (renderData) => ({
+        entity: renderData.entity,
+        positions: renderData.orbitPositions,
+      })
+    ),
+    ...moonRenderData.map(
+      (renderData) => ({
+        entity: renderData.entity,
+        positions: renderData.orbitPositions,
+      })
+    ),
+  ]
+  const maximumSegmentLength =
+    Math.max(
+      viewer.scene.canvas.clientWidth,
+      viewer.scene.canvas.clientHeight
+    ) *
+    orbitTuningSettings
+      .maxSegmentLengthRatio
+
+  let closestEntity:
+    | Entity
+    | undefined
+  let closestDistance =
+    10
+
+  for (const candidate of candidates) {
+    const positions =
+      candidate.positions.getValue(
+        viewer.clock.currentTime
+      ) as
+        | Cartesian3[]
+        | undefined
+
+    if (!positions) {
+      continue
+    }
+
+    for (
+      let index = 1;
+      index < positions.length;
+      index += 1
+    ) {
+      const start =
+        getScreenPosition(
+          positions[index - 1]
+        )
+      const end =
+        getScreenPosition(
+          positions[index]
+        )
+
+      if (
+        !start ||
+        !end ||
+        Cartesian2.distance(start, end) >
+          maximumSegmentLength
+      ) {
+        continue
+      }
+
+      const distance =
+        getDistanceToScreenSegment(
+          position,
+          start,
+          end
+        )
+
+      if (distance < closestDistance) {
+        closestDistance =
+          distance
+        closestEntity =
+          candidate.entity
+      }
+    }
+  }
+
+  return closestEntity
+}
+
 function selectBody(
   entity: Entity
 ) {
+  // Selection drives Cesium's green reticule. It intentionally does not alter
+  // the camera target, which remains the body at the orbit centre.
   viewer.selectedEntity =
     entity
 }
@@ -5358,6 +5980,12 @@ function selectBody(
 let activeCameraTargetEntity:
   | Entity
   | undefined
+
+viewer.selectedEntityChanged.addEventListener(
+  () => {
+    updateSelectedBodyInfo()
+  }
+)
 
 let cameraCentrePosition =
   Cartesian3.clone(
@@ -5570,6 +6198,251 @@ function getBodyInfoForEntity(
   return undefined
 }
 
+function formatInfoDistance(
+  metres: number
+) {
+  const kilometres =
+    metres / 1000
+
+  if (metres >= AU * 0.1) {
+    return `${(metres / AU).toFixed(3)} AU`
+  }
+
+  return `${Math.round(kilometres).toLocaleString()} km`
+}
+
+function formatInfoPeriod(
+  hours: number
+) {
+  const absoluteHours =
+    Math.abs(hours)
+  const direction =
+    hours < 0
+      ? ' retrograde'
+      : ''
+
+  if (absoluteHours >= 24 * 365) {
+    return `${(absoluteHours / (24 * 365.25)).toFixed(2)} years${direction}`
+  }
+
+  if (absoluteHours >= 48) {
+    return `${(absoluteHours / 24).toFixed(2)} days${direction}`
+  }
+
+  return `${absoluteHours.toFixed(2)} hours${direction}`
+}
+
+function appendInfoRow(
+  label: string,
+  value: string
+) {
+  const term =
+    document.createElement(
+      'dt'
+    )
+  const description =
+    document.createElement(
+      'dd'
+    )
+
+  term.textContent =
+    label
+  description.textContent =
+    value
+
+  infoList.append(
+    term,
+    description
+  )
+}
+
+function updateSelectedBodyInfo() {
+  infoList.replaceChildren()
+
+  const selectedEntity =
+    viewer.selectedEntity
+  const selected =
+    getBodyInfoForEntity(
+      selectedEntity
+    )
+  const target =
+    getBodyInfoForEntity(
+      activeCameraTargetEntity
+    )
+
+  infoTitle.textContent =
+    selected
+      ? selected.name
+      : 'Body information'
+
+  appendInfoRow(
+    'Selection',
+    selected?.name ?? 'None'
+  )
+  appendInfoRow(
+    'Camera target',
+    target?.name ?? 'None'
+  )
+
+  if (!selectedEntity || !selected) {
+    return
+  }
+
+  if (selectedEntity === sunEntity) {
+    const spin =
+      getBodySpin('Sun')
+
+    appendInfoRow('Kind', 'Star')
+    appendInfoRow(
+      'Radius',
+      formatInfoDistance(sun_rad)
+    )
+    appendInfoRow(
+      'Rotation',
+      spin
+        ? formatInfoPeriod(
+            spin.rotationPeriodHours
+          )
+        : 'Unknown'
+    )
+
+    return
+  }
+
+  const planet =
+    planetRenderData.find(
+      (renderData) =>
+        renderData.entity === selectedEntity
+    )
+
+  if (planet) {
+    const spin =
+      getBodySpin(
+        planet.planet.name
+      )
+    const orbitalPeriodDays =
+      Math.sqrt(
+        planet.planet.a.base ** 3
+      ) * 365.25
+
+    appendInfoRow('Kind', 'Planet')
+    appendInfoRow(
+      'Radius',
+      formatInfoDistance(
+        planet.planet.radius
+      )
+    )
+    appendInfoRow(
+      'Solar distance',
+      `${planet.planet.a.base.toFixed(3)} AU`
+    )
+    appendInfoRow(
+      'Orbital period',
+      formatInfoPeriod(
+        orbitalPeriodDays * 24
+      )
+    )
+    appendInfoRow(
+      'Eccentricity',
+      planet.planet.e.base.toFixed(4)
+    )
+    appendInfoRow(
+      'Inclination',
+      `${planet.planet.i.base.toFixed(2)} deg`
+    )
+    appendInfoRow(
+      'Rotation',
+      spin
+        ? formatInfoPeriod(
+            spin.rotationPeriodHours
+          )
+        : 'Unknown'
+    )
+    appendInfoRow(
+      'Axis tilt',
+      spin
+        ? `${spin.axialTiltDegrees.toFixed(2)} deg`
+        : 'Unknown'
+    )
+
+    if (planet.planet.name === 'Pluto') {
+      appendInfoRow(
+        'Binary companion',
+        'Charon, shared barycentre'
+      )
+    }
+
+    return
+  }
+
+  const moon =
+    moonRenderData.find(
+      (renderData) =>
+        renderData.entity === selectedEntity
+    )
+
+  if (!moon) {
+    return
+  }
+
+  if (moon.moon.isArtificialSatellite) {
+    appendInfoRow('Kind', 'Spacecraft')
+    appendInfoRow(
+      'Model span',
+      '109 m'
+    )
+    appendInfoRow(
+      'Orbit altitude',
+      formatInfoDistance(
+        moon.moon.orbitRadius -
+        moon.parent.planet.radius
+      )
+    )
+  } else {
+    const spin =
+      getBodySpin(
+        moon.moon.name,
+        moon.moon
+      )
+
+    appendInfoRow('Kind', 'Moon')
+    appendInfoRow(
+      'Parent',
+      moon.parent.planet.name
+    )
+    appendInfoRow(
+      'Radius',
+      formatInfoDistance(
+        moon.moon.radius
+      )
+    )
+    appendInfoRow(
+      'Orbit radius',
+      formatInfoDistance(
+        moon.moon.orbitRadius
+      )
+    )
+    appendInfoRow(
+      'Orbital period',
+      formatInfoPeriod(
+        moon.moon.orbitalPeriodDays * 24
+      )
+    )
+    appendInfoRow(
+      'Inclination',
+      `${moon.moon.inclination.toFixed(2)} deg`
+    )
+    appendInfoRow(
+      'Rotation',
+      spin
+        ? formatInfoPeriod(
+            spin.rotationPeriodHours
+          )
+        : 'Unknown'
+    )
+  }
+}
+
 function getBodyTuningForEntity(
   entity:
     | Entity
@@ -5633,6 +6506,11 @@ function updateRenderedBodyPositions(
   currentTime: JulianDate,
   updatePlanetOrbitShapes: boolean
 ) {
+  const plutoCharonPositions =
+    getPlutoCharonPhysicalPositions(
+      currentTime
+    )
+
   sunRenderPosition =
     toRenderPosition(
       sun_pos,
@@ -5668,14 +6546,28 @@ function updateRenderedBodyPositions(
       renderData.currentPosition
     )
 
-    updateBodyPrimitiveTransform(
-      renderData.bodyPrimitive,
-      renderData.currentPosition,
+    const rotation =
       getBodyRotationMatrix(
         renderData.planet.name,
         currentTime
       )
+
+    updateBodyPrimitiveTransform(
+      renderData.bodyPrimitive,
+      renderData.currentPosition,
+      rotation
     )
+
+    if (
+      renderData.planet.name === 'Saturn' &&
+      saturnRingPrimitive
+    ) {
+      updateBodyPrimitiveTransform(
+        saturnRingPrimitive,
+        renderData.currentPosition,
+        rotation
+      )
+    }
 
     updateBodyDayNightMaterial(
       renderData.bodyPrimitive,
@@ -5727,7 +6619,15 @@ function updateRenderedBodyPositions(
       toRenderPositions(
         createMoonOrbitPositions(
           renderData.moon,
-          renderData.parent.physicalPosition
+          renderData.moon.name === 'Charon' &&
+          plutoCharonPositions
+            ? plutoCharonPositions.barycentre
+            : renderData.parent.physicalPosition,
+          144,
+          renderData.moon.name === 'Charon' &&
+          plutoCharonPositions
+            ? plutoCharonPositions.charonOrbitRadius
+            : renderData.moon.orbitRadius
         )
       )
     )
@@ -6008,6 +6908,36 @@ function updateCameraZoomRate() {
     return
   }
 
+  if (
+    isEntityArtificialSatellite(
+      activeCameraTargetEntity
+    )
+  ) {
+    // A 55 m proxy ellipsoid makes Cesium's collision camera alternate between
+    // collision and inertia states. Spacecraft use an unconstrained controller
+    // so they can be orbited and approached like a visible model.
+    updateCameraControllerEllipsoid(
+      undefined
+    )
+
+    cameraController.zoomFactor =
+      Math.max(
+        cameraTuningSettings
+          .trackedBodyZoomFactor,
+        40
+      )
+    cameraController.minimumZoomDistance =
+      0.5
+    cameraController.enableCollisionDetection =
+      false
+    cameraController._minimumZoomRate =
+      0.05
+    cameraController._maximumZoomRate =
+      1_000_000
+
+    return
+  }
+
   updateCameraControllerEllipsoid(
     radius
   )
@@ -6243,9 +7173,6 @@ function trackBody(
 
   clearNativeTrackedEntity()
 
-  viewer.selectedEntity =
-    undefined
-
   const entityRadius =
     getEntityRadius(
       entity
@@ -6267,10 +7194,12 @@ function trackBody(
     entityRadius
   ) {
     const satelliteRange =
-      getWholeBodyCameraRange(
-        entityRadius
-      ) *
-      1.8
+      Math.max(
+        450,
+        getWholeBodyCameraRange(
+          entityRadius
+        ) * 3
+      )
 
     if (currentRange > satelliteRange * 3) {
       frameBodyAtRange(
@@ -6357,6 +7286,8 @@ function trackBody(
   )
 
   updateCameraZoomRate()
+
+  updateSelectedBodyInfo()
 }
 
 function getWholeBodyCameraRange(
@@ -6396,9 +7327,6 @@ function frameBodyAtRange(
   }
 
   clearNativeTrackedEntity()
-
-  viewer.selectedEntity =
-    undefined
 
   const normalisedDirectionWC =
     Cartesian3.normalize(
@@ -6473,6 +7401,8 @@ function frameBodyAtRange(
 
   updateCameraZoomRate()
 
+  updateSelectedBodyInfo()
+
   return true
 }
 
@@ -6528,13 +7458,21 @@ viewer
     const entity =
       getTrackableBodyAt(
         movement.position
+      ) ??
+      getOrbitEntityAt(
+        movement.position
       )
 
     if (entity) {
       selectBody(
         entity
       )
+
+      return
     }
+
+    viewer.selectedEntity =
+      undefined
   },
   ScreenSpaceEventType.LEFT_CLICK
 )
@@ -6554,6 +7492,9 @@ viewer
       )
 
     if (entity) {
+      selectBody(
+        entity
+      )
       trackBody(
         entity
       )
@@ -6585,6 +7526,10 @@ viewer.scene.canvas.addEventListener(
 
     event.preventDefault()
     event.stopImmediatePropagation()
+
+    selectBody(
+      entity
+    )
 
     trackBody(
       entity
@@ -7706,6 +8651,9 @@ function updateBillboardFade(
       radius
     )
 
+  const wasSuppressedByContext =
+    state.suppressedByContext
+
   state.suppressedByContext =
     false
 
@@ -7726,6 +8674,16 @@ function updateBillboardFade(
 
   if (
     !state.visible &&
+    pixelDiameter <= fadeInThreshold
+  ) {
+    state.visible = true
+  }
+
+  // Local-view suppression deliberately does not change the size state. When
+  // leaving that view, restore an icon immediately whenever it is back below
+  // the fade-in threshold instead of waiting for another threshold crossing.
+  if (
+    wasSuppressedByContext &&
     pixelDiameter <= fadeInThreshold
   ) {
     state.visible = true
@@ -7987,21 +8945,32 @@ viewer.scene.preUpdate.addEventListener(() => {
   // PHYSICAL POSITIONS
   // --------------------------------------------------
 
+  const plutoCharonPositions =
+    getPlutoCharonPhysicalPositions(
+      currentTime
+    )
+
   for (const renderData of planetRenderData) {
     renderData.physicalPosition =
-      getPlanetPosition(
-        renderData.planet,
-        currentTime
-      )
+      renderData.planet.name === 'Pluto' &&
+      plutoCharonPositions
+        ? plutoCharonPositions.pluto
+        : getPlanetPosition(
+            renderData.planet,
+            currentTime
+          )
   }
 
   for (const renderData of moonRenderData) {
     renderData.physicalPosition =
-      getMoonPosition(
-        renderData.moon,
-        renderData.parent.physicalPosition,
-        currentTime
-      )
+      renderData.moon.name === 'Charon' &&
+      plutoCharonPositions
+        ? plutoCharonPositions.charon
+        : getMoonPosition(
+            renderData.moon,
+            renderData.parent.physicalPosition,
+            currentTime
+          )
   }
 
   updateRenderOriginForCameraTarget()
@@ -8145,3 +9114,5 @@ if (openedOnEarth) {
     )
   )
 }
+
+updateSelectedBodyInfo()
