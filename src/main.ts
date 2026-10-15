@@ -62,6 +62,7 @@ type SolarCameraController =
     _minimumTrackBallHeight?: number
     _minimumZoomRate?: number
     _maximumZoomRate?: number
+    _globe?: unknown
   }
 
 const cameraController =
@@ -130,6 +131,10 @@ const CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER = 0
 
 const CURSOR_ZOOM_START_ALTITUDE_MULTIPLIER =
   0.35
+
+const SATELLITE_ZOOM_FACTOR = 100
+
+const MINIMUM_SATELLITE_ZOOM_RATE = 50
 
 const orbitOverlayCanvas =
   document.createElement('canvas')
@@ -6281,18 +6286,57 @@ cameraController.update = () => {
   const scene = viewer.scene as typeof viewer.scene & {
     _cameraUnderground: boolean
   }
+  const cursorAnchoredZoom =
+    shouldUseCursorAnchoredZoom()
   const nativeCameraUnderground =
     scene._cameraUnderground
+  const nativeControllerGlobe =
+    Object.getOwnPropertyDescriptor(
+      cameraController,
+      '_globe'
+    )
+  const suppressControllerGlobe =
+    Boolean(activeCameraTargetEntity) &&
+    !cursorAnchoredZoom &&
+    Boolean(nativeControllerGlobe)
 
   if (activeCameraTargetEntity) {
     scene._cameraUnderground =
-      shouldUseCursorAnchoredZoom()
+      cursorAnchoredZoom
+
+    // Cesium enables pointer-follow zoom whenever its controller can pick a
+    // globe. Block the controller's per-frame globe assignment above the
+    // local threshold so it takes the centred camera.zoomIn path instead.
+    if (suppressControllerGlobe) {
+      Object.defineProperty(
+        cameraController,
+        '_globe',
+        {
+          configurable: true,
+          get: () => undefined,
+          set: () => undefined,
+        }
+      )
+    }
   }
 
-  nativeCameraControllerUpdate()
+  try {
+    nativeCameraControllerUpdate()
+  } finally {
+    if (
+      suppressControllerGlobe &&
+      nativeControllerGlobe
+    ) {
+      Object.defineProperty(
+        cameraController,
+        '_globe',
+        nativeControllerGlobe
+      )
+    }
 
-  scene._cameraUnderground =
-    nativeCameraUnderground
+    scene._cameraUnderground =
+      nativeCameraUnderground
+  }
 }
 
 function isEntityMoon(
@@ -6382,6 +6426,24 @@ function getBodyInfoForEntity(
   return undefined
 }
 
+function formatInfoNumber(
+  value: number,
+  maximumFractionDigits = 2
+) {
+  const rounded = Number(
+    value.toFixed(maximumFractionDigits)
+  )
+
+  return new Intl.NumberFormat(
+    'en-GB',
+    {
+      maximumFractionDigits,
+    }
+  ).format(
+    Object.is(rounded, -0) ? 0 : rounded
+  )
+}
+
 function formatInfoDistance(
   metres: number
 ) {
@@ -6389,7 +6451,7 @@ function formatInfoDistance(
     metres / 1000
 
   if (metres >= AU * 0.1) {
-    return `${(metres / AU).toFixed(3)} AU`
+    return `${formatInfoNumber(metres / AU, 3)} AU`
   }
 
   return `${Math.round(kilometres).toLocaleString()} km`
@@ -6406,14 +6468,29 @@ function formatInfoPeriod(
       : ''
 
   if (absoluteHours >= 24 * 365) {
-    return `${(absoluteHours / (24 * 365.25)).toFixed(2)} years${direction}`
+    const years =
+      absoluteHours / (24 * 365.25)
+    const roundedYears = Number(
+      years.toFixed(2)
+    )
+
+    return `${formatInfoNumber(years)} ${roundedYears === 1 ? 'year' : 'years'}${direction}`
   }
 
   if (absoluteHours >= 48) {
-    return `${(absoluteHours / 24).toFixed(2)} days${direction}`
+    const days = absoluteHours / 24
+    const roundedDays = Number(
+      days.toFixed(2)
+    )
+
+    return `${formatInfoNumber(days)} ${roundedDays === 1 ? 'day' : 'days'}${direction}`
   }
 
-  return `${absoluteHours.toFixed(2)} hours${direction}`
+  const roundedHours = Number(
+    absoluteHours.toFixed(2)
+  )
+
+  return `${formatInfoNumber(absoluteHours)} ${roundedHours === 1 ? 'hour' : 'hours'}${direction}`
 }
 
 function appendInfoRow(
@@ -6512,7 +6589,7 @@ function updateSelectedBodyInfo() {
     )
     appendInfoRow(
       'Solar distance',
-      `${planet.planet.a.base.toFixed(3)} AU`
+      `${formatInfoNumber(planet.planet.a.base, 3)} AU`
     )
     appendInfoRow(
       'Orbital period',
@@ -6522,11 +6599,14 @@ function updateSelectedBodyInfo() {
     )
     appendInfoRow(
       'Eccentricity',
-      planet.planet.e.base.toFixed(4)
+      formatInfoNumber(
+        planet.planet.e.base,
+        4
+      )
     )
     appendInfoRow(
       'Inclination',
-      `${planet.planet.i.base.toFixed(2)} deg`
+      `${formatInfoNumber(planet.planet.i.base)} deg`
     )
     appendInfoRow(
       'Rotation',
@@ -6539,7 +6619,7 @@ function updateSelectedBodyInfo() {
     appendInfoRow(
       'Axis tilt',
       spin
-        ? `${spin.axialTiltDegrees.toFixed(2)} deg`
+        ? `${formatInfoNumber(spin.axialTiltDegrees)} deg`
         : 'Unknown'
     )
 
@@ -6602,7 +6682,7 @@ function updateSelectedBodyInfo() {
     )
     appendInfoRow(
       'Inclination',
-      `${moon.moon.inclination.toFixed(2)} deg`
+      `${formatInfoNumber(moon.moon.inclination)} deg`
     )
     appendInfoRow(
       'Rotation',
@@ -7108,14 +7188,14 @@ function updateCameraZoomRate() {
       Math.max(
         cameraTuningSettings
           .trackedBodyZoomFactor,
-        40
+        SATELLITE_ZOOM_FACTOR
       )
     cameraController.minimumZoomDistance =
       0.5
     cameraController.enableCollisionDetection =
       false
     cameraController._minimumZoomRate =
-      0.05
+      MINIMUM_SATELLITE_ZOOM_RATE
     cameraController._maximumZoomRate =
       1_000_000
 
