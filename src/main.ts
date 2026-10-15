@@ -110,7 +110,7 @@ const DEFAULT_MINIMUM_TRACK_BALL_HEIGHT =
 
 const TRACKED_BODY_ZOOM_FACTOR = 8
 
-const SURFACE_ZOOM_LIMIT_MULTIPLIER = 1.001
+const SURFACE_ZOOM_LIMIT_MULTIPLIER = 1.55
 
 const CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER = 0
 
@@ -1492,9 +1492,19 @@ type MoonData = {
   isArtificialSatellite?: boolean
 }
 
-type BodyTexture =
-  | HTMLCanvasElement
-  | string
+type BodyTexture = string
+
+type BodySpin = {
+  rotationPeriodHours: number
+  axialTiltDegrees: number
+  phaseDegrees?: number
+}
+
+type LitBodyPrimitive = {
+  material: Material
+  sunDirectionEC: Cartesian3
+  selfIlluminated: boolean
+}
 
 type EarthTextureTier = {
   image: string
@@ -2021,6 +2031,56 @@ const majorMoons: MoonData[] = [
   },
 ]
 
+// The exact meridian phase is only important for textured bodies. Earth uses
+// Greenwich sidereal time below; the remaining values keep their spin rates
+// physically plausible without introducing a second time system.
+const namedBodySpins: Record<string, BodySpin> = {
+  Sun: {
+    rotationPeriodHours: 609.12,
+    axialTiltDegrees: 7.25,
+  },
+  Mercury: {
+    rotationPeriodHours: 1_407.6,
+    axialTiltDegrees: 0.03,
+  },
+  Venus: {
+    rotationPeriodHours: -5_832.5,
+    axialTiltDegrees: 177.36,
+  },
+  Earth: {
+    rotationPeriodHours: 23.9344696,
+    axialTiltDegrees: 23.43928,
+  },
+  Mars: {
+    rotationPeriodHours: 24.6229,
+    axialTiltDegrees: 25.19,
+  },
+  Jupiter: {
+    rotationPeriodHours: 9.925,
+    axialTiltDegrees: 3.13,
+  },
+  Saturn: {
+    rotationPeriodHours: 10.656,
+    axialTiltDegrees: 26.73,
+  },
+  Uranus: {
+    rotationPeriodHours: -17.24,
+    axialTiltDegrees: 97.77,
+  },
+  Neptune: {
+    rotationPeriodHours: 16.11,
+    axialTiltDegrees: 28.32,
+  },
+  Pluto: {
+    rotationPeriodHours: -153.2928,
+    axialTiltDegrees: 119.59,
+  },
+  Moon: {
+    rotationPeriodHours: 655.728,
+    axialTiltDegrees: 6.68,
+  },
+}
+
 
 // --------------------------------------------------
 // BASIC MATH
@@ -2052,6 +2112,91 @@ function getJulianDay(time: JulianDate): number {
 
 function getJulianCenturies(time: JulianDate): number {
   return (getJulianDay(time) - 2_451_545.0) / 36_525
+}
+
+const J2000_JULIAN_DAY = 2_451_545.0
+
+function getEarthGreenwichSiderealAngle(
+  time: JulianDate
+) {
+  const daysSinceJ2000 =
+    getJulianDay(time) -
+    J2000_JULIAN_DAY
+
+  const degrees =
+    280.46061837 +
+    360.98564736629 * daysSinceJ2000
+
+  return normaliseRadians(
+    degToRad(degrees)
+  )
+}
+
+function getBodySpin(
+  name: string,
+  moon: MoonData | undefined = undefined
+): BodySpin | undefined {
+  const namedSpin =
+    namedBodySpins[name]
+
+  if (namedSpin) {
+    return namedSpin
+  }
+
+  if (!moon || moon.isArtificialSatellite) {
+    return undefined
+  }
+
+  return {
+    rotationPeriodHours:
+      moon.orbitalPeriodDays *
+      24 *
+      (moon.retrograde ? -1 : 1),
+    axialTiltDegrees: 0,
+    phaseDegrees: moon.phaseOffset,
+  }
+}
+
+function getBodyRotationMatrix(
+  name: string,
+  time: JulianDate,
+  moon: MoonData | undefined = undefined
+) {
+  const spin =
+    getBodySpin(name, moon)
+
+  if (!spin) {
+    return undefined
+  }
+
+  const spinAngle =
+    name === 'Earth'
+      ? getEarthGreenwichSiderealAngle(time)
+      : normaliseRadians(
+        (
+          (getJulianDay(time) -
+            J2000_JULIAN_DAY) *
+          24 /
+          spin.rotationPeriodHours
+        ) *
+          Math.PI *
+          2 +
+        degToRad(spin.phaseDegrees ?? 0)
+      )
+
+  const axialTilt =
+    Matrix3.fromRotationX(
+      degToRad(spin.axialTiltDegrees)
+    )
+
+  const bodySpin =
+    Matrix3.fromRotationZ(spinAngle)
+
+  return Matrix3.multiply(
+    axialTilt,
+    bodySpin,
+    new Matrix3()
+  )
 }
 
 
@@ -3052,7 +3197,7 @@ const initialEarthSurfaceTexture:
   earthTextureTiers[
     activeEarthTextureTierIndex
   ]?.image ??
-  createStylizedEarthTexture()
+  createStylizedEarthTexture().toDataURL()
 
 for (const tier of earthTextureTiers) {
   const image =
@@ -3063,7 +3208,97 @@ for (const tier of earthTextureTiers) {
 }
 
 const moonSurfaceTexture =
-  createStylizedMoonTexture()
+  createStylizedMoonTexture().toDataURL()
+
+const solidBodyTextures =
+  new Map<string, string>()
+
+const litBodyPrimitives =
+  new Map<Primitive, LitBodyPrimitive>()
+
+const bodyDayNightMaterialSource = `
+uniform sampler2D image;
+uniform vec3 sunDirectionEC;
+uniform float selfIlluminated;
+
+czm_material czm_getMaterial(czm_materialInput materialInput)
+{
+  czm_material material = czm_getDefaultMaterial(materialInput);
+  vec4 surface = texture(image, materialInput.st);
+  float solarFacing = dot(
+    normalize(materialInput.normalEC),
+    normalize(sunDirectionEC)
+  );
+  float daylight = smoothstep(-0.16, 0.10, solarFacing);
+  float illumination = mix(0.025, 1.0, daylight);
+  illumination = mix(illumination, 1.0, selfIlluminated);
+  material.diffuse = surface.rgb * illumination;
+  material.emission = surface.rgb * selfIlluminated;
+  material.alpha = surface.a;
+  return material;
+}
+`
+
+function getSolidBodyTexture(
+  colour: string
+) {
+  const existingTexture =
+    solidBodyTextures.get(colour)
+
+  if (existingTexture) {
+    return existingTexture
+  }
+
+  const texture =
+    document.createElement('canvas')
+
+  texture.width = 2
+  texture.height = 2
+
+  const context =
+    texture.getContext('2d')
+
+  if (context) {
+    context.fillStyle = colour
+    context.fillRect(0, 0, 2, 2)
+  }
+
+  const dataUrl =
+    texture.toDataURL()
+
+  solidBodyTextures.set(colour, dataUrl)
+
+  return dataUrl
+}
+
+function createBodyDayNightMaterial(
+  texture: BodyTexture,
+  selfIlluminated: boolean
+) {
+  const sunDirectionEC =
+    new Cartesian3(0, 0, 1)
+
+  const material =
+    new Material({
+      translucent: false,
+      fabric: {
+        type: 'SolarDayNight',
+        uniforms: {
+          image: texture,
+          sunDirectionEC,
+          selfIlluminated:
+            selfIlluminated ? 1 : 0,
+        },
+        source:
+          bodyDayNightMaterialSource,
+      },
+    })
+
+  return {
+    material,
+    sunDirectionEC,
+  }
+}
 
 function createBodyPrimitive(
   entity: Entity,
@@ -3073,18 +3308,23 @@ function createBodyPrimitive(
   texture:
     | BodyTexture
     | undefined =
-    undefined
+    undefined,
+  selfIlluminated = false
 ) {
-  const vertexFormat =
-    texture
-      ? MaterialAppearance
-        .MaterialSupport
-        .TEXTURED
-        .vertexFormat
-      : PerInstanceColorAppearance
-        .VERTEX_FORMAT
+  const surfaceTexture =
+    texture ??
+    getSolidBodyTexture(colour)
 
-  return viewer.scene.primitives.add(
+  const {
+    material,
+    sunDirectionEC,
+  } = createBodyDayNightMaterial(
+    surfaceTexture,
+    selfIlluminated
+  )
+
+  const primitive =
+    viewer.scene.primitives.add(
     new Primitive({
       geometryInstances:
         new GeometryInstance({
@@ -3107,52 +3347,23 @@ function createBodyPrimitive(
                 BODY_SLICE_PARTITIONS,
 
               vertexFormat:
-                vertexFormat,
+                MaterialAppearance
+                  .MaterialSupport
+                  .TEXTURED
+                  .vertexFormat,
             }),
-
-          attributes:
-            texture
-              ? undefined
-              : {
-                color:
-                  ColorGeometryInstanceAttribute
-                    .fromColor(
-                      Color.fromCssColorString(
-                        colour
-                      )
-                    ),
-              },
         }),
 
       appearance:
-        texture
-          ? new MaterialAppearance({
-            closed: true,
-            translucent: false,
-            materialSupport:
-              MaterialAppearance
-                .MaterialSupport
-                .TEXTURED,
-            material:
-              Material.fromType(
-                Material.ImageType,
-                {
-                  image:
-                    texture,
-                  repeat:
-                    new Cartesian2(
-                      1,
-                      1
-                    ),
-                  color:
-                    Color.WHITE,
-                }
-              ),
-          })
-          : new PerInstanceColorAppearance({
-            closed: true,
-            translucent: false,
-          }),
+        new MaterialAppearance({
+          closed: true,
+          translucent: false,
+          materialSupport:
+            MaterialAppearance
+              .MaterialSupport
+              .TEXTURED,
+          material,
+        }),
 
       asynchronous:
         false,
@@ -3166,6 +3377,17 @@ function createBodyPrimitive(
         ),
     })
   ) as Primitive
+
+  litBodyPrimitives.set(
+    primitive,
+    {
+      material,
+      sunDirectionEC,
+      selfIlluminated,
+    }
+  )
+
+  return primitive
 }
 
 function createIssPrimitive(
@@ -3234,13 +3456,56 @@ function createIssPrimitive(
   ) as Primitive
 }
 
-function updateBodyPrimitivePosition(
+function updateBodyPrimitiveTransform(
   primitive: Primitive,
-  position: Cartesian3
+  position: Cartesian3,
+  rotation: Matrix3 | undefined =
+    undefined
 ) {
-  Matrix4.fromTranslation(
-    position,
-    primitive.modelMatrix
+  if (rotation) {
+    Matrix4.fromRotationTranslation(
+      rotation,
+      position,
+      primitive.modelMatrix
+    )
+
+    return
+  }
+
+  Matrix4.fromTranslation(position, primitive.modelMatrix)
+}
+
+function updateBodyDayNightMaterial(
+  primitive: Primitive,
+  bodyPosition: Cartesian3
+) {
+  const lighting =
+    litBodyPrimitives.get(primitive)
+
+  if (!lighting || lighting.selfIlluminated) {
+    return
+  }
+
+  const sunDirectionWC =
+    Cartesian3.subtract(
+      sunRenderPosition,
+      bodyPosition,
+      new Cartesian3()
+    )
+
+  if (Cartesian3.magnitude(sunDirectionWC) < 1) {
+    return
+  }
+
+  Matrix4.multiplyByPointAsVector(
+    viewer.camera.viewMatrix,
+    sunDirectionWC,
+    lighting.sunDirectionEC
+  )
+
+  Cartesian3.normalize(
+    lighting.sunDirectionEC,
+    lighting.sunDirectionEC
   )
 }
 
@@ -3348,7 +3613,9 @@ const sunBodyPrimitive =
     sunEntity,
     sun_rad,
     '#ffb300',
-    sunRenderPosition
+    sunRenderPosition,
+    undefined,
+    true
   )
 
 trackableBodies.add(
@@ -4878,7 +5145,7 @@ createNumberControl(
 createNumberControl(
   cameraSection,
   'Surface zoom x radius',
-  'Closest radial camera distance from the active body centre. 1 touches the surface, 1.001 is just above it, and values below 1 permit close-up views inside the rendered sphere. The number box accepts any value; the slider is only a convenient range.',
+  'Closest radial camera distance from the active body centre. 1 touches the surface; the default 1.55 stops at 0.55 body radii above it. Values below 1 permit close-up views inside the rendered sphere. The number box accepts any value; the slider is only a convenient range.',
   0,
   2,
   0.01,
@@ -5376,7 +5643,16 @@ function updateRenderedBodyPositions(
     sunRenderPosition
   )
 
-  updateBodyPrimitivePosition(
+  updateBodyPrimitiveTransform(
+    sunBodyPrimitive,
+    sunRenderPosition,
+    getBodyRotationMatrix(
+      'Sun',
+      currentTime
+    )
+  )
+
+  updateBodyDayNightMaterial(
     sunBodyPrimitive,
     sunRenderPosition
   )
@@ -5392,7 +5668,16 @@ function updateRenderedBodyPositions(
       renderData.currentPosition
     )
 
-    updateBodyPrimitivePosition(
+    updateBodyPrimitiveTransform(
+      renderData.bodyPrimitive,
+      renderData.currentPosition,
+      getBodyRotationMatrix(
+        renderData.planet.name,
+        currentTime
+      )
+    )
+
+    updateBodyDayNightMaterial(
       renderData.bodyPrimitive,
       renderData.currentPosition
     )
@@ -5423,7 +5708,17 @@ function updateRenderedBodyPositions(
       renderData.currentPosition
     )
 
-    updateBodyPrimitivePosition(
+    updateBodyPrimitiveTransform(
+      renderData.bodyPrimitive,
+      renderData.currentPosition,
+      getBodyRotationMatrix(
+        renderData.moon.name,
+        currentTime,
+        renderData.moon
+      )
+    )
+
+    updateBodyDayNightMaterial(
       renderData.bodyPrimitive,
       renderData.currentPosition
     )
@@ -5460,41 +5755,61 @@ function getCameraConstraintAxisWorld(
   return Cartesian3.UNIT_Z
 }
 
+function getPerpendicularUnitVector(
+  direction: Cartesian3,
+  candidates: Cartesian3[]
+) {
+  const normalisedDirection =
+    Cartesian3.normalize(
+      direction,
+      new Cartesian3()
+    )
+
+  for (const candidate of candidates) {
+    const directionComponent =
+      Cartesian3.multiplyByScalar(
+        normalisedDirection,
+        Cartesian3.dot(
+          candidate,
+          normalisedDirection
+        ),
+        new Cartesian3()
+      )
+
+    const perpendicular =
+      Cartesian3.subtract(
+        candidate,
+        directionComponent,
+        new Cartesian3()
+      )
+
+    if (Cartesian3.magnitude(perpendicular) >= 1e-7) {
+      return Cartesian3.normalize(
+        perpendicular,
+        perpendicular
+      )
+    }
+  }
+
+  // This can only be reached for an invalid camera direction, but it keeps
+  // the camera frame finite rather than letting a zero cross-product spread.
+  return Cartesian3.clone(Cartesian3.UNIT_Y)
+}
+
 function getConstraintAlignedUp(
   directionWC: Cartesian3,
   constraintAxisWC: Cartesian3,
   fallbackUpWC: Cartesian3
 ) {
-  const directionComponent =
-    Cartesian3.multiplyByScalar(
-      directionWC,
-      Cartesian3.dot(
-        constraintAxisWC,
-        directionWC
-      ),
-      new Cartesian3()
-    )
-
-  const upWC =
-    Cartesian3.subtract(
+  return getPerpendicularUnitVector(
+    directionWC,
+    [
       constraintAxisWC,
-      directionComponent,
-      new Cartesian3()
-    )
-
-  if (
-    Cartesian3.magnitude(
-      upWC
-    ) < 1e-7
-  ) {
-    return Cartesian3.clone(
-      fallbackUpWC
-    )
-  }
-
-  return Cartesian3.normalize(
-    upWC,
-    upWC
+      fallbackUpWC,
+      Cartesian3.UNIT_Z,
+      Cartesian3.UNIT_Y,
+      Cartesian3.UNIT_X,
+    ]
   )
 }
 
@@ -5734,35 +6049,16 @@ function normaliseCameraAxes() {
     viewer.camera.direction
   )
 
-  const directionComponent =
-    Cartesian3.multiplyByScalar(
+  Cartesian3.clone(
+    getPerpendicularUnitVector(
       viewer.camera.direction,
-      Cartesian3.dot(
+      [
         viewer.camera.up,
-        viewer.camera.direction
-      ),
-      new Cartesian3()
-    )
-
-  Cartesian3.subtract(
-    viewer.camera.up,
-    directionComponent,
-    viewer.camera.up
-  )
-
-  if (
-    Cartesian3.magnitude(
-      viewer.camera.up
-    ) < 1e-7
-  ) {
-    Cartesian3.clone(
-      Cartesian3.UNIT_Z,
-      viewer.camera.up
-    )
-  }
-
-  Cartesian3.normalize(
-    viewer.camera.up,
+        Cartesian3.UNIT_Z,
+        Cartesian3.UNIT_Y,
+        Cartesian3.UNIT_X,
+      ]
+    ),
     viewer.camera.up
   )
 
