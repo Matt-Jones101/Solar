@@ -1,5 +1,6 @@
 import {
   ArcType,
+  BoxGeometry,
   buildModuleUrl,
   Cartesian2,
   Cartesian3,
@@ -109,7 +110,7 @@ const DEFAULT_MINIMUM_TRACK_BALL_HEIGHT =
 
 const TRACKED_BODY_ZOOM_FACTOR = 8
 
-const SURFACE_ZOOM_LIMIT_MULTIPLIER = 1.04
+const SURFACE_ZOOM_LIMIT_MULTIPLIER = 1.001
 
 const CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER = 0
 
@@ -1488,6 +1489,7 @@ type MoonData = {
   inclination: number
   longitudeAscendingNode: number
   retrograde?: boolean
+  isArtificialSatellite?: boolean
 }
 
 type BodyTexture =
@@ -1760,6 +1762,21 @@ const majorMoons: MoonData[] = [
     phaseOffset: 45,
     inclination: 5.1,
     longitudeAscendingNode: 125,
+  },
+
+  {
+    name: 'ISS',
+    parent: 'Earth',
+    // A deliberately simple, circular low-Earth orbit. The visual model is
+    // approximately the station's 109 m solar-array span rather than a sphere.
+    radius: 55,
+    orbitRadius: 6_771_000,
+    orbitalPeriodDays: 0.0646,
+    colour: '#e8eef7',
+    phaseOffset: 235,
+    inclination: 51.6,
+    longitudeAscendingNode: 20,
+    isArtificialSatellite: true,
   },
 
   {
@@ -3151,6 +3168,72 @@ function createBodyPrimitive(
   ) as Primitive
 }
 
+function createIssPrimitive(
+  entity: Entity,
+  position: Cartesian3
+) {
+  const createBoxInstance = (
+    dimensions: Cartesian3,
+    offset: Cartesian3,
+    colour: string
+  ) =>
+    new GeometryInstance({
+      id: entity,
+      geometry: BoxGeometry.fromDimensions({
+        dimensions,
+        vertexFormat:
+          PerInstanceColorAppearance
+            .VERTEX_FORMAT,
+      }),
+      modelMatrix:
+        Matrix4.fromTranslation(
+          offset
+        ),
+      attributes: {
+        color:
+          ColorGeometryInstanceAttribute
+            .fromColor(
+              Color.fromCssColorString(
+                colour
+              )
+            ),
+      },
+    })
+
+  return viewer.scene.primitives.add(
+    new Primitive({
+      geometryInstances: [
+        createBoxInstance(
+          new Cartesian3(18, 7, 7),
+          Cartesian3.ZERO,
+          '#e8eef7'
+        ),
+        createBoxInstance(
+          new Cartesian3(44, 3, 0.5),
+          new Cartesian3(-31, 0, 0),
+          '#3d75b8'
+        ),
+        createBoxInstance(
+          new Cartesian3(44, 3, 0.5),
+          new Cartesian3(31, 0, 0),
+          '#3d75b8'
+        ),
+      ],
+      appearance:
+        new PerInstanceColorAppearance({
+          closed: true,
+          translucent: false,
+        }),
+      asynchronous: false,
+      cull: false,
+      modelMatrix:
+        Matrix4.fromTranslation(
+          position
+        ),
+    })
+  ) as Primitive
+}
+
 function updateBodyPrimitivePosition(
   primitive: Primitive,
   position: Cartesian3
@@ -3584,15 +3667,20 @@ for (const moon of majorMoons) {
   })
 
   const bodyPrimitive =
-    createBodyPrimitive(
-      moonEntity,
-      moon.radius,
-      moon.colour,
-      initialPosition,
-      moon.name === 'Moon'
-        ? moonSurfaceTexture
-        : undefined
-    )
+    moon.isArtificialSatellite
+      ? createIssPrimitive(
+        moonEntity,
+        initialPosition
+      )
+      : createBodyPrimitive(
+        moonEntity,
+        moon.radius,
+        moon.colour,
+        initialPosition,
+        moon.name === 'Moon'
+          ? moonSurfaceTexture
+          : undefined
+      )
 
   trackableBodies.add(
     moonEntity
@@ -4160,7 +4248,7 @@ function createSettingsSection(
   section.className =
     'solar-settings-section'
   section.open =
-    true
+    false
 
   const summary =
     document.createElement(
@@ -4770,7 +4858,7 @@ const cameraSection =
 createNumberControl(
   cameraSection,
   'Axis close-up x radius',
-  'When positive, turns off orbital-plane constrained orbiting once the camera is within this many body radii of the camera centre. Set 0 or less to keep the constraint active all the way in.',
+  'Controls when the camera may stop orbiting around the body\'s orbital-plane axis. Set 0 to keep that axis locked at every range; a positive value releases the lock inside this many body radii. This is not a zoom limit.',
   0,
   30,
   0.25,
@@ -4790,7 +4878,7 @@ createNumberControl(
 createNumberControl(
   cameraSection,
   'Surface zoom x radius',
-  'Minimum camera distance from the active body centre, measured in body radii. 1 is the surface, 1.04 sits just above it, 0.5 allows halfway into the rendered sphere, and 0 or less removes the distance floor.',
+  'Closest radial camera distance from the active body centre. 1 touches the surface, 1.001 is just above it, and values below 1 permit close-up views inside the rendered sphere. The number box accepts any value; the slider is only a convenient range.',
   0,
   2,
   0.01,
@@ -4810,7 +4898,7 @@ createNumberControl(
 createNumberControl(
   cameraSection,
   'Tracked zoom factor',
-  'Mouse-wheel and pinch zoom sensitivity while a body is the camera centre. Bigger values move faster per scroll; smaller values are finer control. This does not set the closest or farthest allowed distance.',
+  'Multiplies each wheel or pinch zoom step while a body is centred. Cesium scales each step by the remaining distance to the surface limit, so higher values stay responsive nearer that limit; this cannot move through the limit set above.',
   0,
   20,
   0.25,
@@ -5625,12 +5713,12 @@ function updateCameraZoomRate() {
       .trackedBodyZoomFactor
 
   cameraController.minimumZoomDistance =
-    Math.max(
-      0,
-      radius *
+    radius *
+      (
         cameraTuningSettings
-          .surfaceZoomLimitMultiplier
-    )
+          .surfaceZoomLimitMultiplier -
+        1
+      )
 
   cameraController._minimumZoomRate =
     Math.max(
@@ -5800,8 +5888,6 @@ function updateCameraCentre() {
     return
   }
 
-  updateCameraConstraintAxis()
-
   const position =
     getEntityPosition(
       activeCameraTargetEntity
@@ -5817,6 +5903,8 @@ function updateCameraCentre() {
       cameraCentrePosition
     ) < 1
   ) {
+    updateCameraConstraintAxis()
+
     return
   }
 
@@ -5829,6 +5917,10 @@ function updateCameraCentre() {
       position,
       cameraCentrePosition
     )
+
+  // The camera reference frame changes above, so resolve the axis after the
+  // change rather than briefly applying it in the previous frame.
+  updateCameraConstraintAxis()
 }
 
 function clearNativeTrackedEntity() {
