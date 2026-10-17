@@ -20,6 +20,7 @@ import {
   MaterialAppearance,
   Matrix3,
   Matrix4,
+  NearFarScalar,
   PerInstanceColorAppearance,
   Primitive,
   SceneTransforms,
@@ -135,6 +136,9 @@ const CURSOR_ZOOM_START_ALTITUDE_MULTIPLIER =
 const SATELLITE_ZOOM_FACTOR = 100
 
 const MINIMUM_SATELLITE_ZOOM_RATE = 50
+
+const SATELLITE_ZOOM_DISTANCE_FRACTION =
+  1.5
 
 const orbitOverlayCanvas =
   document.createElement('canvas')
@@ -1364,9 +1368,9 @@ const DEFAULT_BODY_TUNING_SETTINGS:
         ),
       orbitHidePixelDiameter: 0,
       localViewPixelDiameter: 16,
-      orbitGapIconPixels: 32,
+      orbitGapIconPixels: 104,
       orbitGapMinRadius: 2,
-      orbitGapMaxRadius: 34,
+      orbitGapMaxRadius: 74,
       orbitGapPadding: 5,
     },
 
@@ -1563,6 +1567,11 @@ type BillboardState = {
 
 type OrbitGap = {
   centre: Cartesian2
+  radius: number
+}
+
+type OrbitOccluder = {
+  position: Cartesian3
   radius: number
 }
 
@@ -2823,6 +2832,44 @@ function makeCircleIcon(
   )
 }
 
+function makeSunFlareIcon(): string {
+  const svg = `
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="256"
+      height="256"
+      viewBox="0 0 256 256"
+    >
+      <defs>
+        <radialGradient id="core" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#fffde1" stop-opacity="1" />
+          <stop offset="18%" stop-color="#fff6ac" stop-opacity="1" />
+          <stop offset="42%" stop-color="#ffd54b" stop-opacity="0.92" />
+          <stop offset="70%" stop-color="#ff9f1c" stop-opacity="0.32" />
+          <stop offset="100%" stop-color="#ff7a00" stop-opacity="0" />
+        </radialGradient>
+        <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#ffe985" stop-opacity="0.5" />
+          <stop offset="55%" stop-color="#ffb21b" stop-opacity="0.16" />
+          <stop offset="100%" stop-color="#ff8600" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="128" cy="128" r="124" fill="url(#halo)" />
+      <path d="M128 4L141 93L128 118L115 93Z" fill="#ffe9a1" fill-opacity="0.32" />
+      <path d="M252 128L163 141L138 128L163 115Z" fill="#ffe9a1" fill-opacity="0.32" />
+      <path d="M128 252L115 163L128 138L141 163Z" fill="#ffe9a1" fill-opacity="0.32" />
+      <path d="M4 128L93 115L118 128L93 141Z" fill="#ffe9a1" fill-opacity="0.32" />
+      <circle cx="128" cy="128" r="96" fill="url(#core)" />
+      <circle cx="128" cy="128" r="34" fill="#fff8bd" fill-opacity="0.95" />
+    </svg>
+  `
+
+  return (
+    'data:image/svg+xml;charset=utf-8,' +
+    encodeURIComponent(svg)
+  )
+}
+
 function makeIssIcon(): string {
   const svg = `
     <svg
@@ -4048,18 +4095,22 @@ const sunEntity = viewer.entities.add({
 
   billboard: {
     image:
-      makeCircleIcon(
-        '#ffcc33'
+      makeSunFlareIcon(),
+
+    width: 144,
+    height: 144,
+
+    scaleByDistance:
+      new NearFarScalar(
+        AU * 0.25,
+        1,
+        AU * 45,
+        0.36
       ),
 
-    width: 32,
-    height: 32,
-
+    // Leave depth testing enabled so nearer bodies win the draw order.
     color:
       sunBillboardColor,
-
-    disableDepthTestDistance:
-      Number.POSITIVE_INFINITY,
   },
 })
 
@@ -7196,8 +7247,23 @@ function updateCameraZoomRate() {
       false
     cameraController._minimumZoomRate =
       MINIMUM_SATELLITE_ZOOM_RATE
+
+    const targetPosition =
+      getEntityRenderPosition(
+        activeCameraTargetEntity
+      )
+
     cameraController._maximumZoomRate =
-      1_000_000
+      targetPosition
+        ? Math.max(
+          MINIMUM_SATELLITE_ZOOM_RATE,
+          Cartesian3.distance(
+            viewer.camera.positionWC,
+            targetPosition
+          ) *
+            SATELLITE_ZOOM_DISTANCE_FRACTION
+        )
+        : 10_000_000
 
     return
   }
@@ -8229,79 +8295,103 @@ function interpolateScreenPoint(
   )
 }
 
-function isPointVisibleInFrontOfBody(
+function getOrbitOccluders() {
+  const occluders: OrbitOccluder[] = []
+
+  const addOccluder = (
+    position: Cartesian3,
+    radius: number
+  ) => {
+    if (
+      getBodyPixelRadius(
+        position,
+        radius
+      ) >= 0.75
+    ) {
+      occluders.push({
+        position,
+        radius,
+      })
+    }
+  }
+
+  addOccluder(
+    sunRenderPosition,
+    sun_rad
+  )
+
+  for (const renderData of planetRenderData) {
+    addOccluder(
+      renderData.currentPosition,
+      renderData.planet.radius
+    )
+  }
+
+  for (const renderData of moonRenderData) {
+    addOccluder(
+      renderData.currentPosition,
+      renderData.moon.radius
+    )
+  }
+
+  return occluders
+}
+
+function isPointVisibleInFrontOfBodies(
   point: Cartesian3,
-  bodyPosition: Cartesian3,
-  bodyRadius: number
+  occluders: OrbitOccluder[]
 ) {
-  const cameraToPoint =
-    Cartesian3.subtract(
-      point,
-      viewer.camera.positionWC,
-      new Cartesian3()
-    )
+  const camera = viewer.camera.positionWC
+  const pointX = point.x - camera.x
+  const pointY = point.y - camera.y
+  const pointZ = point.z - camera.z
+  const pointDistanceSquared =
+    pointX * pointX +
+    pointY * pointY +
+    pointZ * pointZ
 
-  const pointDistance =
-    Cartesian3.magnitude(
-      cameraToPoint
-    )
-
-  if (pointDistance <= 0) {
+  if (pointDistanceSquared <= 0) {
     return false
   }
 
-  const rayDirection =
-    Cartesian3.divideByScalar(
-      cameraToPoint,
-      pointDistance,
-      new Cartesian3()
-    )
+  for (const occluder of occluders) {
+    const bodyX =
+      occluder.position.x - camera.x
+    const bodyY =
+      occluder.position.y - camera.y
+    const bodyZ =
+      occluder.position.z - camera.z
+    const projection =
+      (
+        bodyX * pointX +
+        bodyY * pointY +
+        bodyZ * pointZ
+      ) /
+      pointDistanceSquared
 
-  const cameraToBody =
-    Cartesian3.subtract(
-      bodyPosition,
-      viewer.camera.positionWC,
-      new Cartesian3()
-    )
+    // The body must sit strictly between the camera and this orbit sample. It
+    // is therefore not its own occluder at the orbit's body position.
+    if (projection <= 0 || projection >= 1) {
+      continue
+    }
 
-  const bodyDistanceAlongRay =
-    Cartesian3.dot(
-      cameraToBody,
-      rayDirection
-    )
+    const closestDistanceSquared =
+      bodyX * bodyX +
+      bodyY * bodyY +
+      bodyZ * bodyZ -
+      projection *
+        projection *
+        pointDistanceSquared
 
-  if (
-    bodyDistanceAlongRay <= 0 ||
-    bodyDistanceAlongRay >= pointDistance
-  ) {
-    return true
+    if (
+      closestDistanceSquared <
+      occluder.radius * occluder.radius
+    ) {
+      return false
+    }
   }
 
-  const closestDistanceSquared =
-    Cartesian3.magnitudeSquared(
-      cameraToBody
-    ) -
-    bodyDistanceAlongRay *
-      bodyDistanceAlongRay
-
-  const bodyRadiusSquared =
-    bodyRadius * bodyRadius
-
-  if (
-    closestDistanceSquared >=
-    bodyRadiusSquared
-  ) {
-    return true
-  }
-
-  const nearSurfaceDistance =
-    bodyDistanceAlongRay -
-    Math.sqrt(
-      bodyRadiusSquared -
-        closestDistanceSquared
-    )
-
-  return pointDistance <= nearSurfaceDistance
+  return true
 }
 
 function drawOrbitPath(
@@ -8547,6 +8637,16 @@ function drawOrbitOverlay() {
       sunBillboardState
     )
 
+  const orbitOccluders =
+    getOrbitOccluders()
+  const isOrbitPointVisible = (
+    position: Cartesian3
+  ) =>
+    isPointVisibleInFrontOfBodies(
+      position,
+      orbitOccluders
+    )
+
   if (!hidePlanetOrbits) {
     for (const renderData of planetRenderData) {
       const planetSettings =
@@ -8585,7 +8685,8 @@ function drawOrbitOverlay() {
         orbitTuningSettings.planetOrbitWidth,
         gaps,
         overlay.width,
-        overlay.height
+        overlay.height,
+        isOrbitPointVisible
       )
 
     }
@@ -8618,7 +8719,8 @@ function drawOrbitOverlay() {
         ? [planetGap]
         : [],
       overlay.width,
-      overlay.height
+      overlay.height,
+      isOrbitPointVisible
     )
   }
 
@@ -8744,16 +8846,7 @@ function drawOrbitOverlay() {
       gaps,
       overlay.width,
       overlay.height,
-      isArtificialSatellite
-        ? (position) =>
-          isPointVisibleInFrontOfBody(
-            position,
-            renderData.parent
-              .currentPosition,
-            renderData.parent
-              .planet.radius
-          )
-        : undefined
+      isOrbitPointVisible
     )
   }
 }
@@ -9034,6 +9127,44 @@ function updateMoonBillboardFade(
   )
 }
 
+function updateSunFlare(
+  settings: BodyTuningSettings,
+  deltaSeconds: number
+) {
+  updateBillboardFade(
+    sunRenderPosition,
+    sun_rad,
+    sunBillboardColor,
+    sunBillboardState,
+    deltaSeconds,
+    settings.iconFadeOutPixelDiameter,
+    settings.iconFadeInPixelDiameter
+  )
+
+  const distanceInAu =
+    Cartesian3.distance(
+      viewer.camera.positionWC,
+      sunRenderPosition
+    ) / AU
+  const distanceAlpha = Math.max(
+    0.18,
+    Math.min(
+      1,
+      0.85 /
+        Math.sqrt(
+          Math.max(0.25, distanceInAu)
+        )
+    )
+  )
+
+  sunBillboardColor.setValue(
+    Color.WHITE.withAlpha(
+      sunBillboardState.alpha *
+        distanceAlpha
+    )
+  )
+}
+
 function isTrackedBodyLocalView() {
   const trackedEntity =
     activeCameraTargetEntity
@@ -9279,14 +9410,9 @@ viewer.scene.preUpdate.addEventListener(() => {
       'sun'
     )
 
-  updateBillboardFade(
-    sunRenderPosition,
-    sun_rad,
-    sunBillboardColor,
-    sunBillboardState,
-    deltaSeconds,
-    sunSettings.iconFadeOutPixelDiameter,
-    sunSettings.iconFadeInPixelDiameter
+  updateSunFlare(
+    sunSettings,
+    deltaSeconds
   )
 
 
