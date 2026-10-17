@@ -133,13 +133,6 @@ const CONSTRAINED_AXIS_CLOSEUP_RANGE_MULTIPLIER = 0
 const CURSOR_ZOOM_START_ALTITUDE_MULTIPLIER =
   0.35
 
-const SATELLITE_ZOOM_FACTOR = 100
-
-const MINIMUM_SATELLITE_ZOOM_RATE = 50
-
-const SATELLITE_ZOOM_DISTANCE_FRACTION =
-  1.5
-
 const orbitOverlayCanvas =
   document.createElement('canvas')
 
@@ -1290,6 +1283,7 @@ type BodyKind =
   | 'sun'
   | 'planet'
   | 'moon'
+  | 'spacecraft'
 
 type BodyTuningSettings = {
   iconFadeOutPixelDiameter: number
@@ -1300,6 +1294,9 @@ type BodyTuningSettings = {
   orbitGapMinRadius: number
   orbitGapMaxRadius: number
   orbitGapPadding: number
+  spacecraftControlRadius: number
+  spacecraftMinimumZoomRate: number
+  spacecraftZoomFactor: number
 }
 
 type OrbitTuningSettings = {
@@ -1372,6 +1369,9 @@ const DEFAULT_BODY_TUNING_SETTINGS:
       orbitGapMinRadius: 2,
       orbitGapMaxRadius: 74,
       orbitGapPadding: 5,
+      spacecraftControlRadius: 0.05,
+      spacecraftMinimumZoomRate: 150,
+      spacecraftZoomFactor: 100,
     },
 
     planet: {
@@ -1386,6 +1386,9 @@ const DEFAULT_BODY_TUNING_SETTINGS:
       orbitGapMinRadius: 2,
       orbitGapMaxRadius: 46,
       orbitGapPadding: 5,
+      spacecraftControlRadius: 0.05,
+      spacecraftMinimumZoomRate: 150,
+      spacecraftZoomFactor: 100,
     },
 
     moon: {
@@ -1400,6 +1403,28 @@ const DEFAULT_BODY_TUNING_SETTINGS:
       orbitGapMinRadius: 3,
       orbitGapMaxRadius: 14,
       orbitGapPadding: 4,
+      spacecraftControlRadius: 0.05,
+      spacecraftMinimumZoomRate: 150,
+      spacecraftZoomFactor: 100,
+    },
+
+    spacecraft: {
+      iconFadeOutPixelDiameter: 20,
+      iconFadeInPixelDiameter:
+        getDerivedIconFadeInPixelDiameter(
+          20
+        ),
+      orbitHidePixelDiameter: 20,
+      localViewPixelDiameter: 14,
+      orbitGapIconPixels: 34,
+      orbitGapMinRadius: 3,
+      orbitGapMaxRadius: 18,
+      orbitGapPadding: 4,
+      // Spacecraft use their own point-like camera reference. Their visual
+      // model dimensions must not influence Cesium's close-range controls.
+      spacecraftControlRadius: 0.05,
+      spacecraftMinimumZoomRate: 150,
+      spacecraftZoomFactor: 100,
     },
   }
 
@@ -1418,6 +1443,10 @@ const bodyTuningSettings:
 
     moon: {
       ...DEFAULT_BODY_TUNING_SETTINGS.moon,
+    },
+
+    spacecraft: {
+      ...DEFAULT_BODY_TUNING_SETTINGS.spacecraft,
     },
   }
 
@@ -1534,7 +1563,8 @@ type MoonData = {
   inclination: number
   longitudeAscendingNode: number
   retrograde?: boolean
-  isArtificialSatellite?: boolean
+  isSpacecraft?: boolean
+  modelSpanMetres?: number
 }
 
 type BodyTexture = string
@@ -1838,7 +1868,25 @@ const majorMoons: MoonData[] = [
     phaseOffset: 235,
     inclination: 51.6,
     longitudeAscendingNode: 20,
-    isArtificialSatellite: true,
+    isSpacecraft: true,
+    modelSpanMetres: 109,
+  },
+
+  {
+    name: 'JWST',
+    parent: 'Earth',
+    // A simple Earth-centred stand-in for the Sun-Earth L2 halo orbit. The
+    // viewing scale is useful here while the information panel names it as a
+    // stylised representation rather than a precise ephemeris.
+    radius: 11,
+    orbitRadius: 1_500_000_000,
+    orbitalPeriodDays: 180,
+    colour: '#d9b75c',
+    phaseOffset: 35,
+    inclination: 28,
+    longitudeAscendingNode: 112,
+    isSpacecraft: true,
+    modelSpanMetres: 21,
   },
 
   {
@@ -2196,7 +2244,7 @@ function getBodySpin(
     return namedSpin
   }
 
-  if (!moon || moon.isArtificialSatellite) {
+  if (!moon || moon.isSpacecraft) {
     return undefined
   }
 
@@ -2884,6 +2932,29 @@ function makeIssIcon(): string {
       <rect x="29" y="17" width="6" height="30" rx="1" fill="#cad8e5" />
       <path d="M23 32h18M32 16v32" stroke="#152738" stroke-width="2" />
       <circle cx="32" cy="22" r="4" fill="#f5d276" />
+    </svg>
+  `
+
+  return (
+    'data:image/svg+xml;charset=utf-8,' +
+    encodeURIComponent(svg)
+  )
+}
+
+function makeJwstIcon(): string {
+  const svg = `
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="64"
+      height="64"
+      viewBox="0 0 64 64"
+    >
+      <path d="M16 35h32l-5 13H21Z" fill="#d8aa55" />
+      <path d="M18 35h28" stroke="#fff1b8" stroke-width="2" />
+      <path d="M25 13h14l8 14-15 8-15-8Z" fill="#e7d18b" stroke="#6b5936" stroke-width="2" />
+      <path d="M25 13l7 22 7-22M17 27h30" stroke="#8f7541" stroke-width="1.5" />
+      <rect x="5" y="30" width="13" height="8" fill="#496f9e" />
+      <rect x="46" y="30" width="13" height="8" fill="#496f9e" />
     </svg>
   `
 
@@ -3843,6 +3914,77 @@ function createIssPrimitive(
   ) as Primitive
 }
 
+function createJwstPrimitive(
+  entity: Entity,
+  position: Cartesian3
+) {
+  const createBoxInstance = (
+    dimensions: Cartesian3,
+    offset: Cartesian3,
+    colour: string
+  ) =>
+    new GeometryInstance({
+      id: entity,
+      geometry: BoxGeometry.fromDimensions({
+        dimensions,
+        vertexFormat:
+          PerInstanceColorAppearance
+            .VERTEX_FORMAT,
+      }),
+      modelMatrix:
+        Matrix4.fromTranslation(
+          offset
+        ),
+      attributes: {
+        color:
+          ColorGeometryInstanceAttribute
+            .fromColor(
+              Color.fromCssColorString(
+                colour
+              )
+            ),
+      },
+    })
+
+  return viewer.scene.primitives.add(
+    new Primitive({
+      geometryInstances: [
+        createBoxInstance(
+          new Cartesian3(6.5, 4, 3.5),
+          new Cartesian3(0, 0, 2),
+          '#e7d18b'
+        ),
+        createBoxInstance(
+          new Cartesian3(18, 14, 0.5),
+          new Cartesian3(0, 0, -2),
+          '#d8aa55'
+        ),
+        createBoxInstance(
+          new Cartesian3(7, 2.5, 0.35),
+          new Cartesian3(-7, 0, 1),
+          '#496f9e'
+        ),
+        createBoxInstance(
+          new Cartesian3(7, 2.5, 0.35),
+          new Cartesian3(7, 0, 1),
+          '#496f9e'
+        ),
+      ],
+      appearance:
+        new PerInstanceColorAppearance({
+          closed: true,
+          translucent: false,
+        }),
+      asynchronous: false,
+      cull: false,
+      modelMatrix:
+        Matrix4.fromTranslation(
+          position
+        ),
+    })
+  ) as Primitive
+}
+
 function createSaturnRingsPrimitive(
   entity: Entity,
   radius: number,
@@ -4053,6 +4195,22 @@ let sunRenderPosition =
     sun_pos
   )
 
+let sunFlareRenderPosition =
+  Cartesian3.add(
+    sunRenderPosition,
+    Cartesian3.multiplyByScalar(
+      Cartesian3.UNIT_X,
+      sun_rad * 1.002,
+      new Cartesian3()
+    ),
+    new Cartesian3()
+  )
+
+const sunFlarePositionProperty =
+  new ConstantPositionProperty(
+    sunFlareRenderPosition
+  )
+
 const sunBillboardState: BillboardState = {
   alpha: 1,
   visible: true,
@@ -4093,25 +4251,6 @@ const sunEntity = viewer.entities.add({
       ),
   },
 
-  billboard: {
-    image:
-      makeSunFlareIcon(),
-
-    width: 144,
-    height: 144,
-
-    scaleByDistance:
-      new NearFarScalar(
-        AU * 0.25,
-        1,
-        AU * 45,
-        0.36
-      ),
-
-    // Leave depth testing enabled so nearer bodies win the draw order.
-    color:
-      sunBillboardColor,
-  },
 })
 
 const sunBodyPrimitive =
@@ -4127,6 +4266,26 @@ const sunBodyPrimitive =
 trackableBodies.add(
   sunEntity
 )
+
+// The flare lives just above the visible, camera-facing solar surface. That
+// avoids it being depth-hidden by the Sun itself, while normal depth testing
+// still hides it behind any nearer planet or moon.
+const sunFlareEntity = viewer.entities.add({
+  name: 'Sun flare',
+  position: sunFlarePositionProperty,
+  billboard: {
+    image: makeSunFlareIcon(),
+    width: 144,
+    height: 144,
+    scaleByDistance: new NearFarScalar(
+      AU * 0.25,
+      1,
+      AU * 45,
+      0.36
+    ),
+    color: sunBillboardColor,
+  },
+})
 
 
 // --------------------------------------------------
@@ -4458,18 +4617,20 @@ for (const moon of majorMoons) {
 
     billboard: {
       image:
-        moon.isArtificialSatellite
-          ? makeIssIcon()
+        moon.isSpacecraft
+          ? moon.name === 'JWST'
+            ? makeJwstIcon()
+            : makeIssIcon()
           : makeCircleIcon(
               moon.colour
             ),
 
       width:
-        moon.isArtificialSatellite
+        moon.isSpacecraft
           ? 34
           : 20,
       height:
-        moon.isArtificialSatellite
+        moon.isSpacecraft
           ? 34
           : 20,
 
@@ -4482,11 +4643,16 @@ for (const moon of majorMoons) {
   })
 
   const bodyPrimitive =
-    moon.isArtificialSatellite
-      ? createIssPrimitive(
-        moonEntity,
-        initialPosition
-      )
+    moon.isSpacecraft
+      ? moon.name === 'JWST'
+        ? createJwstPrimitive(
+          moonEntity,
+          initialPosition
+        )
+        : createIssPrimitive(
+          moonEntity,
+          initialPosition
+        )
       : createBodyPrimitive(
         moonEntity,
         moon.radius,
@@ -4556,6 +4722,12 @@ const settingsTargets: SettingsTarget[] = [
   },
 
   {
+    id: 'default:spacecraft',
+    label: 'Spacecraft defaults',
+    kind: 'spacecraft',
+  },
+
+  {
     id: 'body:Sun',
     label: 'Sun',
     kind: 'sun',
@@ -4575,7 +4747,12 @@ const settingsTargets: SettingsTarget[] = [
     })
   ),
 
-  ...moonRenderData.map(
+  ...moonRenderData
+    .filter(
+      (renderData) =>
+        !renderData.moon.isSpacecraft
+    )
+    .map(
     (renderData) => ({
       id:
         `body:${renderData.moon.name}`,
@@ -4587,6 +4764,24 @@ const settingsTargets: SettingsTarget[] = [
         renderData.moon.name,
     })
   ),
+
+  ...moonRenderData
+    .filter(
+      (renderData) =>
+        renderData.moon.isSpacecraft
+    )
+    .map(
+      (renderData) => ({
+        id:
+          `body:${renderData.moon.name}`,
+        label:
+          `${renderData.moon.name} (Spacecraft)`,
+        kind:
+          'spacecraft' as BodyKind,
+        bodyName:
+          renderData.moon.name,
+      })
+    ),
 ]
 
 let activeSettingsTarget =
@@ -4840,6 +5035,10 @@ function getMutableActiveBodySettings() {
 }
 
 function refreshSettingsControls() {
+  spacecraftCameraSection.hidden =
+    activeSettingsTarget.kind !==
+    'spacecraft'
+
   for (const control of refreshableControls) {
     control.refresh()
   }
@@ -4893,6 +5092,10 @@ function createSettingsDump() {
       moon:
         cloneBodyTuningSettings(
           bodyTuningSettings.moon
+        ),
+      spacecraft:
+        cloneBodyTuningSettings(
+          bodyTuningSettings.spacecraft
         ),
     }
 
@@ -4958,7 +5161,7 @@ function createSettingsDump() {
 
   return JSON.stringify(
     {
-      version: 1,
+      version: 2,
       activeTarget:
         {
           id:
@@ -5493,6 +5696,74 @@ createNumberControl(
   }
 )
 
+const spacecraftCameraSection =
+  createSettingsSection(
+    'Spacecraft camera'
+  )
+
+spacecraftCameraSection.hidden =
+  true
+
+createNumberControl(
+  spacecraftCameraSection,
+  'Control radius m',
+  'Point-like virtual radius used only by Cesium camera controls. It does not resize the spacecraft model. Keeping this tiny stops the controller treating the model span as a planetary surface.',
+  0.001,
+  10,
+  0.001,
+  () =>
+    getActiveBodySettings()
+      .spacecraftControlRadius,
+  (value) => {
+    getMutableActiveBodySettings()
+      .spacecraftControlRadius =
+      value
+  },
+  {
+    clamp: false,
+  }
+)
+
+createNumberControl(
+  spacecraftCameraSection,
+  'Minimum zoom rate',
+  'Smallest camera movement Cesium may apply for each zoom input while this spacecraft is targeted. Raise it if close-range zoom begins to feel sticky.',
+  1,
+  10_000,
+  1,
+  () =>
+    getActiveBodySettings()
+      .spacecraftMinimumZoomRate,
+  (value) => {
+    getMutableActiveBodySettings()
+      .spacecraftMinimumZoomRate =
+      value
+  },
+  {
+    clamp: false,
+  }
+)
+
+createNumberControl(
+  spacecraftCameraSection,
+  'Zoom factor',
+  'Base multiplier for wheel and pinch zoom while this spacecraft is targeted. It is independent of the global body camera setting.',
+  0,
+  500,
+  1,
+  () =>
+    getActiveBodySettings()
+      .spacecraftZoomFactor,
+  (value) => {
+    getMutableActiveBodySettings()
+      .spacecraftZoomFactor =
+      value
+  },
+  {
+    clamp: false,
+  }
+)
+
 createNumberControl(
   gapSection,
   'Gap min radius',
@@ -5758,6 +6029,7 @@ settingsPanel.append(
   settingsScopeNote,
   iconSection,
   gapSection,
+  spacecraftCameraSection,
   globalOrbitSection,
   cameraSection
 )
@@ -5989,9 +6261,69 @@ settingsCopyButton.addEventListener(
 // BODY TRACKING
 // --------------------------------------------------
 
-function getTrackableBodyAt(
+const SELECTION_RETICLE_HALF_SIZE =
+  42
+
+function getSelectedBodyAtReticule(
   position: Cartesian2
 ) {
+  const selectedEntity =
+    viewer.selectedEntity
+
+  if (
+    !selectedEntity ||
+    !trackableBodies.has(
+      selectedEntity
+    )
+  ) {
+    return undefined
+  }
+
+  const bodyPosition =
+    getEntityRenderPosition(
+      selectedEntity
+    )
+
+  if (!bodyPosition) {
+    return undefined
+  }
+
+  const reticuleCentre =
+    getScreenPosition(
+      bodyPosition
+    )
+
+  if (!reticuleCentre) {
+    return undefined
+  }
+
+  return (
+    Math.abs(
+      position.x - reticuleCentre.x
+    ) <= SELECTION_RETICLE_HALF_SIZE &&
+    Math.abs(
+      position.y - reticuleCentre.y
+    ) <= SELECTION_RETICLE_HALF_SIZE
+  )
+    ? selectedEntity
+    : undefined
+}
+
+function getTrackableBodyAt(
+  position: Cartesian2,
+  includeSelectedReticule = false
+) {
+  if (includeSelectedReticule) {
+    const selectedReticuleEntity =
+      getSelectedBodyAtReticule(
+        position
+      )
+
+    if (selectedReticuleEntity) {
+      return selectedReticuleEntity
+    }
+  }
+
   const picked =
     viewer.scene.pick(
       position
@@ -6000,6 +6332,10 @@ function getTrackableBodyAt(
         id?: Entity
       }
       | undefined
+
+  if (picked?.id === sunFlareEntity) {
+    return sunEntity
+  }
 
   if (
     picked?.id &&
@@ -6470,7 +6806,9 @@ function getBodyInfoForEntity(
       name:
         moon.moon.name,
       kind:
-        'moon' as BodyKind,
+        moon.moon.isSpacecraft
+          ? 'spacecraft' as BodyKind
+          : 'moon' as BodyKind,
     }
   }
 
@@ -6694,18 +7032,27 @@ function updateSelectedBodyInfo() {
     return
   }
 
-  if (moon.moon.isArtificialSatellite) {
+  if (moon.moon.isSpacecraft) {
     appendInfoRow(
       'Model span',
-      '109 m'
+      `${moon.moon.modelSpanMetres ?? moon.moon.radius * 2} m`
     )
     appendInfoRow(
-      'Orbit altitude',
+      moon.moon.name === 'JWST'
+        ? 'Orbit'
+        : 'Orbit altitude',
       formatInfoDistance(
         moon.moon.orbitRadius -
         moon.parent.planet.radius
       )
     )
+
+    if (moon.moon.name === 'JWST') {
+      appendInfoRow(
+        'Orbit type',
+        'Stylised Sun-Earth L2 halo'
+      )
+    }
   } else {
     const spin =
       getBodySpin(
@@ -6780,7 +7127,9 @@ function getMoonTuning(
 ) {
   return getBodyTuningSettings(
     renderData.moon.name,
-    'moon'
+    renderData.moon.isSpacecraft
+      ? 'spacecraft'
+      : 'moon'
   )
 }
 
@@ -7078,7 +7427,7 @@ function updateCameraConstraintAxis(
     )
 }
 
-function isEntityArtificialSatellite(
+function isEntitySpacecraft(
   entity:
     | Entity
     | undefined
@@ -7090,7 +7439,7 @@ function isEntityArtificialSatellite(
   return moonRenderData.some(
     (renderData) =>
       renderData.entity === entity &&
-      renderData.moon.isArtificialSatellite
+      renderData.moon.isSpacecraft
   )
 }
 
@@ -7226,44 +7575,40 @@ function updateCameraZoomRate() {
   }
 
   if (
-    isEntityArtificialSatellite(
+    isEntitySpacecraft(
       activeCameraTargetEntity
     )
   ) {
-    // Use the model's real collision scale, while keeping collision disabled.
-    // The controller's rotation and zoom calculations depend on this radius,
-    // so a near-zero proxy makes an ISS camera feel unstable.
-    updateCameraControllerEllipsoid(radius)
+    const settings =
+      getBodyTuningForEntity(
+        activeCameraTargetEntity
+      ) ??
+      bodyTuningSettings.spacecraft
+
+    // Spacecraft are rendered at their physical scale, but their camera is
+    // deliberately point-like. Coupling Cesium's controller ellipsoid to a
+    // 20-100 m model creates an artificial surface and causes close-range
+    // rotation and zoom to stall.
+    updateCameraControllerEllipsoid(
+      Math.max(
+        0.001,
+        settings.spacecraftControlRadius
+      )
+    )
 
     cameraController.zoomFactor =
-      Math.max(
-        cameraTuningSettings
-          .trackedBodyZoomFactor,
-        SATELLITE_ZOOM_FACTOR
-      )
+      settings.spacecraftZoomFactor
     cameraController.minimumZoomDistance =
-      0.5
+      0
     cameraController.enableCollisionDetection =
       false
     cameraController._minimumZoomRate =
-      MINIMUM_SATELLITE_ZOOM_RATE
-
-    const targetPosition =
-      getEntityRenderPosition(
-        activeCameraTargetEntity
+      Math.max(
+        1,
+        settings.spacecraftMinimumZoomRate
       )
-
     cameraController._maximumZoomRate =
-      targetPosition
-        ? Math.max(
-          MINIMUM_SATELLITE_ZOOM_RATE,
-          Cartesian3.distance(
-            viewer.camera.positionWC,
-            targetPosition
-          ) *
-            SATELLITE_ZOOM_DISTANCE_FRACTION
-        )
-        : 10_000_000
+      100_000_000
 
     return
   }
@@ -7787,7 +8132,8 @@ viewer
   ) => {
     const entity =
       getTrackableBodyAt(
-        movement.position
+        movement.position,
+        true
       )
 
     if (entity) {
@@ -7816,7 +8162,8 @@ viewer.scene.canvas.addEventListener(
         new Cartesian2(
           event.clientX - bounds.left,
           event.clientY - bounds.top
-        )
+        ),
+        true
       )
 
     if (!entity) {
@@ -8806,14 +9153,14 @@ function drawOrbitOverlay() {
       continue
     }
 
-    const isArtificialSatellite =
+    const isSpacecraft =
       Boolean(
         renderData.moon
-          .isArtificialSatellite
+          .isSpacecraft
       )
 
     const gaps =
-      isArtificialSatellite
+      isSpacecraft
         ? [
           createBodyOrbitGap(
             renderData.currentPosition,
@@ -9131,6 +9478,36 @@ function updateSunFlare(
   settings: BodyTuningSettings,
   deltaSeconds: number
 ) {
+  const cameraToSun =
+    Cartesian3.subtract(
+      viewer.camera.positionWC,
+      sunRenderPosition,
+      new Cartesian3()
+    )
+
+  if (Cartesian3.magnitude(cameraToSun) >= 1) {
+    Cartesian3.normalize(
+      cameraToSun,
+      cameraToSun
+    )
+
+    Cartesian3.multiplyByScalar(
+      cameraToSun,
+      sun_rad * 1.002,
+      cameraToSun
+    )
+
+    Cartesian3.add(
+      sunRenderPosition,
+      cameraToSun,
+      sunFlareRenderPosition
+    )
+
+    sunFlarePositionProperty.setValue(
+      sunFlareRenderPosition
+    )
+  }
+
   updateBillboardFade(
     sunRenderPosition,
     sun_rad,
